@@ -1,5 +1,3 @@
-
-
     if isinstance(location, dict):
         return " ".join([
             str(location.get("municipality", "")),
