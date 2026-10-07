@@ -1,57 +1,17 @@
 from flask import Flask, request, jsonify
+import json
+import os
 
 app = Flask(__name__)
 
-JOBS = [
-    {
-        "id": "demo-001",
-        "title": "Production Worker",
-        "company": "Demo Manufacturing",
-        "location": "Bayamon, PR",
-        "salary_min": 16.00,
-        "salary_max": 20.00,
-        "salary_period": "hour",
-        "salary_published": True,
-        "industry": "Manufacturing",
-        "employment_type": "Full-time",
-        "posted_date": "2026-10-06",
-        "source": "demo",
-        "application_url": None,
-        "verified": False
-    },
-    {
-        "id": "demo-002",
-        "title": "Aircraft Ground Operations",
-        "company": "Demo Aviation",
-        "location": "Carolina, PR",
-        "salary_min": 15.00,
-        "salary_max": 18.00,
-        "salary_period": "hour",
-        "salary_published": True,
-        "industry": "Aviation",
-        "employment_type": "Full-time",
-        "posted_date": "2026-10-06",
-        "source": "demo",
-        "application_url": None,
-        "verified": False
-    },
-    {
-        "id": "demo-003",
-        "title": "Warehouse Associate",
-        "company": "Demo Logistics",
-        "location": "Catano, PR",
-        "salary_min": 16.00,
-        "salary_max": 19.00,
-        "salary_period": "hour",
-        "salary_published": True,
-        "industry": "Logistics",
-        "employment_type": "Full-time",
-        "posted_date": "2026-10-06",
-        "source": "demo",
-        "application_url": None,
-        "verified": False
-    }
-]
+
+def load_jobs():
+    try:
+        with open("jobs.json", "r", encoding="utf-8") as file:
+            data = json.load(file)
+            return data.get("jobs", [])
+    except Exception:
+        return []
 
 
 @app.route("/")
@@ -59,7 +19,7 @@ def home():
     return jsonify({
         "agent": "PR Intelligence Agent",
         "status": "online",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "description": "Puerto Rico employment intelligence service"
     })
 
@@ -69,7 +29,7 @@ def agent_manifest():
     return jsonify({
         "name": "PR Intelligence Agent",
         "description": "Puerto Rico employment intelligence service for AI agents.",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "capabilities": [
             "job_search",
             "salary_filtering",
@@ -101,6 +61,8 @@ def agent_manifest():
 @app.route("/jobs", methods=["GET"])
 def jobs():
 
+    all_jobs = load_jobs()
+
     location = request.args.get("location", "").lower()
     industry = request.args.get("industry", "").lower()
     employment_type = request.args.get(
@@ -110,32 +72,34 @@ def jobs():
     min_salary = request.args.get("min_salary", type=float)
     max_salary = request.args.get("max_salary", type=float)
 
-    results = JOBS
+    results = all_jobs
 
     if location:
         results = [
             job for job in results
-            if location in job["location"].lower()
+            if location in job.get("location", "").lower()
         ]
 
     if industry:
         results = [
             job for job in results
-            if industry in job["industry"].lower()
+            if industry in job.get("industry", "").lower()
         ]
 
     if employment_type:
         results = [
             job for job in results
-            if employment_type in job["employment_type"].lower()
+            if employment_type in job.get(
+                "employment_type", ""
+            ).lower()
         ]
 
     if min_salary is not None:
         results = [
             job for job in results
             if (
-                job["salary_max"] is not None
-                and job["salary_max"] >= min_salary
+                job.get("salary_max") is not None
+                and job.get("salary_max") >= min_salary
             )
         ]
 
@@ -143,8 +107,8 @@ def jobs():
         results = [
             job for job in results
             if (
-                job["salary_min"] is not None
-                and job["salary_min"] <= max_salary
+                job.get("salary_min") is not None
+                and job.get("salary_min") <= max_salary
             )
         ]
 
@@ -162,4 +126,7 @@ def jobs():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000))
+    )
