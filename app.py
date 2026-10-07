@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# Demo dataset.
+# Later this will be replaced/expanded with real job sources.
 JOBS = [
     {
         "title": "Production Worker",
@@ -32,7 +34,40 @@ def home():
     return jsonify({
         "agent": "PR Intelligence Agent",
         "status": "online",
-        "version": "1.0"
+        "version": "1.0.0",
+        "description": "Puerto Rico employment intelligence service"
+    })
+
+
+@app.route("/.well-known/agent.json")
+def agent_manifest():
+    return jsonify({
+        "name": "PR Intelligence Agent",
+        "description": "Puerto Rico employment intelligence service for AI agents.",
+        "version": "1.0.0",
+        "capabilities": [
+            "job_search",
+            "salary_filtering",
+            "location_filtering",
+            "industry_filtering",
+            "job_intelligence"
+        ],
+        "coverage": {
+            "country": "Puerto Rico",
+            "industries": "multiple",
+            "locations": "Puerto Rico"
+        },
+        "api": {
+            "base_path": "/",
+            "endpoints": {
+                "health": "/",
+                "jobs": "/jobs"
+            }
+        },
+        "pricing": {
+            "model": "per_query",
+            "target_price_usd": 0.10
+        }
     })
 
 
