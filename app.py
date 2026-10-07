@@ -1,24 +1,4 @@
-from flask import Flask, request, jsonify
-import json
-import os
 
-from greenhouse import get_greenhouse_jobs
-from normalizer import normalize_greenhouse_job
-
-app = Flask(__name__)
-
-
-def load_jobs():
-    try:
-        with open("jobs.json", "r", encoding="utf-8") as file:
-            data = json.load(file)
-            return data.get("jobs", [])
-    except Exception:
-        return []
-
-
-def location_text(job):
-    location = job.get("location", {})
 
     if isinstance(location, dict):
         return " ".join([
@@ -169,16 +149,3 @@ def greenhouse_test():
             "board": board_token,
             "count": len(normalized_jobs),
             "jobs": normalized_jobs
-        })
-
-    except Exception as error:
-        return jsonify({
-            "error": str(error)
-        }), 500
-
-
-if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 8000))
-    )
