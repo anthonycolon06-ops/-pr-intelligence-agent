@@ -1,0 +1,37 @@
+{
+  "job_id": "unique-source-id",
+  "title": "Job title",
+  "company": "Company name",
+  "location": {
+    "municipality": "San Juan",
+    "region": "Puerto Rico",
+    "country": "PR"
+  },
+  "industry": "Technology",
+  "salary": {
+    "min": null,
+    "max": null,
+    "currency": "USD",
+    "period": "hour",
+    "published": false
+  },
+  "employment_type": "Full-time",
+  "work_mode": "On-site",
+  "posted_date": null,
+  "updated_date": null,
+  "source": {
+    "name": "Source name",
+    "type": "company_careers",
+    "url": "https://example.com/job",
+    "application_url": "https://example.com/apply"
+  },
+  "verification": {
+    "status": "unverified",
+    "checked_at": null
+  },
+  "requirements": {
+    "education": [],
+    "experience": null,
+    "licenses": []
+  }
+}
