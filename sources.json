@@ -1,0 +1,11 @@
+{
+  "sources": [
+    {
+      "name": "Greenhouse",
+      "type": "job_board_api",
+      "enabled": true,
+      "base_url": "https://boards-api.greenhouse.io/v1/boards/",
+      "coverage": "multiple_companies"
+    }
+  ]
+}
