@@ -1,0 +1,31 @@
+{
+  "name": "PR Intelligence Agent",
+  "description": "Puerto Rico employment intelligence service for AI agents. Searches, filters, compares and structures job opportunities across multiple industries and locations in Puerto Rico.",
+  "version": "1.0.0",
+  "provider": {
+    "name": "PR Intelligence Agent"
+  },
+  "capabilities": [
+    "job_search",
+    "salary_filtering",
+    "location_filtering",
+    "industry_filtering",
+    "job_intelligence"
+  ],
+  "coverage": {
+    "country": "Puerto Rico",
+    "industries": "multiple",
+    "locations": "Puerto Rico"
+  },
+  "api": {
+    "base_path": "/",
+    "endpoints": {
+      "health": "/",
+      "jobs": "/jobs"
+    }
+  },
+  "pricing": {
+    "model": "per_query",
+    "target_price_usd": 0.10
+  }
+}
