@@ -1,4 +1,4 @@
-    if isinstance(location, dict):
+  if isinstance(location, dict):
         return " ".join([
             str(location.get("municipality", "")),
             str(location.get("region", "")),
