@@ -7,7 +7,71 @@ from normalizer import normalize_greenhouse_job
 
 app = Flask(__name__)
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
+
+
+# ============================================================
+# US STATES
+# ============================================================
+
+US_STATES = {
+    "alabama": "AL",
+    "alaska": "AK",
+    "arizona": "AZ",
+    "arkansas": "AR",
+    "california": "CA",
+    "colorado": "CO",
+    "connecticut": "CT",
+    "delaware": "DE",
+    "florida": "FL",
+    "georgia": "GA",
+    "hawaii": "HI",
+    "idaho": "ID",
+    "illinois": "IL",
+    "indiana": "IN",
+    "iowa": "IA",
+    "kansas": "KS",
+    "kentucky": "KY",
+    "louisiana": "LA",
+    "maine": "ME",
+    "maryland": "MD",
+    "massachusetts": "MA",
+    "michigan": "MI",
+    "minnesota": "MN",
+    "mississippi": "MS",
+    "missouri": "MO",
+    "montana": "MT",
+    "nebraska": "NE",
+    "nevada": "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    "ohio": "OH",
+    "oklahoma": "OK",
+    "oregon": "OR",
+    "pennsylvania": "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    "tennessee": "TN",
+    "texas": "TX",
+    "utah": "UT",
+    "vermont": "VT",
+    "virginia": "VA",
+    "washington": "WA",
+    "west virginia": "WV",
+    "wisconsin": "WI",
+    "wyoming": "WY",
+    "district of columbia": "DC",
+}
+
+STATE_CODE_TO_NAME = {
+    code.lower(): name
+    for name, code in US_STATES.items()
+}
 
 
 # ============================================================
@@ -15,10 +79,6 @@ VERSION = "1.5.0"
 # ============================================================
 
 def load_jobs():
-    """
-    Carga empleos guardados en jobs.json como respaldo.
-    """
-
     try:
         with open(
             "jobs.json",
@@ -41,17 +101,14 @@ def load_jobs():
 
 
 # ============================================================
-# GREENHOUSE SOURCE
+# GREENHOUSE
 # ============================================================
 
 def load_greenhouse_jobs(board_token="livecareer"):
-    """
-    Obtiene empleos directamente desde Greenhouse y los normaliza.
 
-    Greenhouse es una fuente dinámica.
-    """
-
-    raw_jobs = get_greenhouse_jobs(board_token)
+    raw_jobs = get_greenhouse_jobs(
+        board_token
+    )
 
     normalized_jobs = []
 
@@ -70,28 +127,17 @@ def load_greenhouse_jobs(board_token="livecareer"):
             )
 
         except Exception:
-            # Un empleo defectuoso no debe tumbar
-            # toda la respuesta de la API.
             continue
 
     return normalized_jobs
 
 
 def load_all_jobs():
-    """
-    Construye el inventario disponible.
-
-    Actualmente:
-    1. Greenhouse dinámico
-    2. jobs.json como respaldo
-
-    Esto permite añadir nuevas fuentes posteriormente.
-    """
 
     jobs = []
 
     # --------------------------------------------------------
-    # GREENHOUSE
+    # LIVE GREENHOUSE DATA
     # --------------------------------------------------------
 
     try:
@@ -108,7 +154,7 @@ def load_all_jobs():
         pass
 
     # --------------------------------------------------------
-    # JOBS.JSON BACKUP
+    # STATIC BACKUP
     # --------------------------------------------------------
 
     stored_jobs = load_jobs()
@@ -122,7 +168,10 @@ def load_all_jobs():
     for job in stored_jobs:
 
         job_id = str(
-            job.get("job_id", "")
+            job.get(
+                "job_id",
+                ""
+            )
         )
 
         if job_id and job_id in existing_ids:
@@ -137,67 +186,10 @@ def load_all_jobs():
 # LOCATION
 # ============================================================
 
-def get_location_text(job):
-
-    location = job.get(
-        "location",
-        {}
-    )
-
-    if isinstance(location, dict):
-
-        municipality = str(
-            location.get(
-                "municipality",
-                ""
-            )
-        )
-
-        region = str(
-            location.get(
-                "region",
-                ""
-            )
-        )
-
-        country = str(
-            location.get(
-                "country",
-                ""
-            )
-        )
-
-        raw = str(
-            location.get(
-                "raw",
-                ""
-            )
-        )
-
-        return " ".join([
-            municipality,
-            region,
-            country,
-            raw
-        ]).lower()
-
-    return str(location).lower()
-
-
 def location_matches(
     job,
     requested_location
 ):
-    """
-    Match a job against a requested location.
-
-    Supports:
-    - Puerto Rico
-    - United States
-    - States
-    - Cities
-    - General location text
-    """
 
     query = str(
         requested_location
@@ -223,28 +215,28 @@ def location_matches(
             "municipality",
             ""
         )
-    ).lower()
+    ).strip().lower()
 
     region = str(
         location.get(
             "region",
             ""
         )
-    ).lower()
+    ).strip().lower()
 
     country = str(
         location.get(
             "country",
             ""
         )
-    ).lower()
+    ).strip().lower()
 
     raw = str(
         location.get(
             "raw",
             ""
         )
-    ).lower()
+    ).strip().lower()
 
     location_text = " ".join([
         municipality,
@@ -295,84 +287,37 @@ def location_matches(
         )
 
     # ========================================================
-    # US STATES
+    # STATE NAME <-> STATE CODE
     # ========================================================
 
-    state_codes = {
-        "al", "ak", "az", "ar", "ca",
-        "co", "ct", "de", "fl", "ga",
-        "hi", "id", "il", "in", "ia",
-        "ks", "ky", "la", "me", "md",
-        "ma", "mi", "mn", "ms", "mo",
-        "mt", "ne", "nv", "nh", "nj",
-        "nm", "ny", "nc", "nd", "oh",
-        "ok", "or", "pa", "ri", "sc",
-        "sd", "tn", "tx", "ut", "vt",
-        "va", "wa", "wv", "wi", "wy",
-        "dc"
-    }
+    requested_state_code = None
 
-    state_names = {
-        "alabama",
-        "alaska",
-        "arizona",
-        "arkansas",
-        "california",
-        "colorado",
-        "connecticut",
-        "delaware",
-        "florida",
-        "georgia",
-        "hawaii",
-        "idaho",
-        "illinois",
-        "indiana",
-        "iowa",
-        "kansas",
-        "kentucky",
-        "louisiana",
-        "maine",
-        "maryland",
-        "massachusetts",
-        "michigan",
-        "minnesota",
-        "mississippi",
-        "missouri",
-        "montana",
-        "nebraska",
-        "nevada",
-        "new hampshire",
-        "new jersey",
-        "new mexico",
-        "new york",
-        "north carolina",
-        "north dakota",
-        "ohio",
-        "oklahoma",
-        "oregon",
-        "pennsylvania",
-        "rhode island",
-        "south carolina",
-        "south dakota",
-        "tennessee",
-        "texas",
-        "utah",
-        "vermont",
-        "virginia",
-        "washington",
-        "west virginia",
-        "wisconsin",
-        "wyoming",
-        "district of columbia"
-    }
+    # User searched "Texas"
+    if query in US_STATES:
 
-    if (
-        query in state_codes
-        or query in state_names
-    ):
+        requested_state_code = (
+            US_STATES[query]
+            .lower()
+        )
+
+    # User searched "TX"
+    elif query in STATE_CODE_TO_NAME:
+
+        requested_state_code = query
+
+    if requested_state_code:
+
+        requested_state_name = (
+            STATE_CODE_TO_NAME[
+                requested_state_code
+            ]
+        )
 
         return (
-            query in location_text
+            region == requested_state_code
+            or region == requested_state_name
+            or requested_state_code in raw.split()
+            or requested_state_name in location_text
         )
 
     # ========================================================
@@ -565,14 +510,12 @@ def agent_manifest():
             VERSION,
 
         "capabilities": [
-
             "job_search",
             "salary_filtering",
             "location_filtering",
             "industry_filtering",
             "employment_type_filtering",
             "job_intelligence"
-
         ],
 
         "coverage": {
@@ -636,15 +579,7 @@ def agent_manifest():
 @app.route("/jobs")
 def jobs():
 
-    # --------------------------------------------------------
-    # LOAD REAL JOB DATA
-    # --------------------------------------------------------
-
     all_jobs = load_all_jobs()
-
-    # --------------------------------------------------------
-    # QUERY PARAMETERS
-    # --------------------------------------------------------
 
     location = request.args.get(
         "location",
@@ -670,10 +605,6 @@ def jobs():
         "max_salary",
         type=float
     )
-
-    # --------------------------------------------------------
-    # APPLY FILTERS
-    # --------------------------------------------------------
 
     results = filter_jobs(
 
@@ -722,10 +653,8 @@ def jobs():
         },
 
         "coverage": [
-
             "Puerto Rico",
             "United States"
-
         ],
 
         "jobs":
@@ -787,21 +716,14 @@ def greenhouse_test():
                 )
 
             except Exception:
-
                 continue
-
-        # ----------------------------------------------------
-        # LOCATION FILTER
-        # ----------------------------------------------------
 
         if requested_location:
 
             normalized_jobs = [
 
                 job
-
                 for job in normalized_jobs
-
                 if location_matches(
                     job,
                     requested_location
@@ -833,10 +755,8 @@ def greenhouse_test():
             },
 
             "coverage": [
-
                 "Puerto Rico",
                 "United States"
-
             ],
 
             "jobs":
@@ -861,18 +781,13 @@ def greenhouse_test():
 if __name__ == "__main__":
 
     port = int(
-
         os.environ.get(
             "PORT",
             8000
         )
-
     )
 
     app.run(
-
         host="0.0.0.0",
-
         port=port
-
     )
