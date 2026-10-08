@@ -3,9 +3,13 @@ import html
 from datetime import datetime, timezone
 
 
+# ============================================================
+# GREENHOUSE CONTENT
+# ============================================================
+
 def decode_greenhouse_content(content):
     """
-    Decodifica el contenido HTML/Unicode que devuelve Greenhouse.
+    Decodifica contenido HTML/Unicode proveniente de Greenhouse.
     """
 
     if not content:
@@ -13,7 +17,7 @@ def decode_greenhouse_content(content):
 
     decoded = str(content)
 
-    for _ in range(3):
+    for _ in range(4):
         decoded = html.unescape(decoded)
 
     decoded = decoded.replace("\\u0026", "&")
@@ -26,7 +30,7 @@ def decode_greenhouse_content(content):
 
 def html_to_text(content):
     """
-    Convierte HTML a texto limpio.
+    Convierte HTML de Greenhouse a texto limpio.
     """
 
     if not content:
@@ -89,7 +93,7 @@ def html_to_text(content):
 
 def get_job_content(job):
     """
-    Obtiene el contenido completo de una vacante Greenhouse.
+    Obtiene la descripción/contenido completo.
     """
 
     content = job.get("content")
@@ -104,6 +108,10 @@ def get_job_content(job):
 
     return ""
 
+
+# ============================================================
+# GENERAL HELPERS
+# ============================================================
 
 def normalize_space(value):
     """
@@ -123,6 +131,10 @@ def normalize_space(value):
 
     return value.strip()
 
+
+# ============================================================
+# LOCATION
+# ============================================================
 
 def extract_location(job):
     """
@@ -169,7 +181,10 @@ def extract_location(job):
     region = None
     municipality = None
 
-    # Puerto Rico
+    # --------------------------------------------------------
+    # PUERTO RICO
+    # --------------------------------------------------------
+
     if (
         "puerto rico" in lowered
         or re.search(r"\bpr\b", lowered)
@@ -190,8 +205,11 @@ def extract_location(job):
         else:
             municipality = "Puerto Rico"
 
+    # --------------------------------------------------------
+    # UNITED STATES
+    # --------------------------------------------------------
+
     else:
-        # Estados Unidos
         country = "US"
 
         us_match = re.search(
@@ -203,7 +221,10 @@ def extract_location(job):
             municipality = (
                 us_match.group(1).strip()
             )
-            region = us_match.group(2).upper()
+
+            region = (
+                us_match.group(2).upper()
+            )
 
         else:
             municipality = raw or None
@@ -216,13 +237,23 @@ def extract_location(job):
     }
 
 
+# ============================================================
+# SALARY
+# ============================================================
+
 def extract_salary(text):
     """
-    Extrae salario solamente cuando existe una cantidad numérica
-    publicada en el texto.
+    Extrae salarios publicados.
 
-    No inventa salario cuando el anuncio dice solamente
-    'Competitive salary', etc.
+    IMPORTANTE:
+    Nunca interpreta '3-5 years' o '5+ years' como salario.
+
+    Requiere un indicador monetario real como:
+    $
+    USD
+    USD 50,000
+    $20/hour
+    $50,000-$70,000/year
     """
 
     if not text:
@@ -234,12 +265,25 @@ def extract_salary(text):
             "published": False,
         }
 
-    salary_pattern = re.compile(
-        r"\$?\s*"
+    # --------------------------------------------------------
+    # Normalización
+    # --------------------------------------------------------
+
+    normalized = (
+        text
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("−", "-")
+    )
+
+    # --------------------------------------------------------
+    # RANGOS CON SIGNO $
+    # --------------------------------------------------------
+
+    range_dollar = re.compile(
+        r"\$\s*"
         r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
-        r"\s*"
-        r"(?:-|–|to)"
-        r"\s*"
+        r"\s*-\s*"
         r"\$?\s*"
         r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
         r"\s*"
@@ -247,7 +291,7 @@ def extract_salary(text):
         flags=re.IGNORECASE,
     )
 
-    match = salary_pattern.search(text)
+    match = range_dollar.search(normalized)
 
     if match:
         minimum = float(
@@ -258,30 +302,9 @@ def extract_salary(text):
             match.group(2).replace(",", "")
         )
 
-        period = (
+        period = normalize_salary_period(
             match.group(3)
-            or "unknown"
-        ).lower()
-
-        if period in {
-            "hour",
-            "hr",
-            "hourly",
-        }:
-            period = "hour"
-
-        elif period in {
-            "year",
-            "annual",
-            "annually",
-        }:
-            period = "year"
-
-        elif period in {
-            "month",
-            "monthly",
-        }:
-            period = "month"
+        )
 
         return {
             "currency": "USD",
@@ -291,46 +314,66 @@ def extract_salary(text):
             "published": True,
         }
 
-    single_pattern = re.compile(
-        r"\$"
-        r"\s*"
+    # --------------------------------------------------------
+    # USD RANGES
+    # --------------------------------------------------------
+
+    range_usd = re.compile(
+        r"\bUSD\s*"
+        r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+        r"\s*-\s*"
+        r"USD?\s*"
         r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
         r"\s*"
         r"(hour|hr|hourly|year|annual|annually|month|monthly)?",
         flags=re.IGNORECASE,
     )
 
-    single_match = single_pattern.search(text)
+    match = range_usd.search(normalized)
 
-    if single_match:
-        amount = float(
-            single_match.group(1).replace(",", "")
+    if match:
+        minimum = float(
+            match.group(1).replace(",", "")
         )
 
-        period = (
-            single_match.group(2)
-            or "unknown"
-        ).lower()
+        maximum = float(
+            match.group(2).replace(",", "")
+        )
 
-        if period in {
-            "hour",
-            "hr",
-            "hourly",
-        }:
-            period = "hour"
+        period = normalize_salary_period(
+            match.group(3)
+        )
 
-        elif period in {
-            "year",
-            "annual",
-            "annually",
-        }:
-            period = "year"
+        return {
+            "currency": "USD",
+            "max": maximum,
+            "min": minimum,
+            "period": period,
+            "published": True,
+        }
 
-        elif period in {
-            "month",
-            "monthly",
-        }:
-            period = "month"
+    # --------------------------------------------------------
+    # SINGLE SALARY CON $
+    # --------------------------------------------------------
+
+    single_dollar = re.compile(
+        r"\$\s*"
+        r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+        r"\s*"
+        r"(hour|hr|hourly|year|annual|annually|month|monthly)?",
+        flags=re.IGNORECASE,
+    )
+
+    match = single_dollar.search(normalized)
+
+    if match:
+        amount = float(
+            match.group(1).replace(",", "")
+        )
+
+        period = normalize_salary_period(
+            match.group(2)
+        )
 
         return {
             "currency": "USD",
@@ -339,6 +382,41 @@ def extract_salary(text):
             "period": period,
             "published": True,
         }
+
+    # --------------------------------------------------------
+    # SINGLE USD
+    # --------------------------------------------------------
+
+    single_usd = re.compile(
+        r"\bUSD\s*"
+        r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+        r"\s*"
+        r"(hour|hr|hourly|year|annual|annually|month|monthly)?",
+        flags=re.IGNORECASE,
+    )
+
+    match = single_usd.search(normalized)
+
+    if match:
+        amount = float(
+            match.group(1).replace(",", "")
+        )
+
+        period = normalize_salary_period(
+            match.group(2)
+        )
+
+        return {
+            "currency": "USD",
+            "max": amount,
+            "min": amount,
+            "period": period,
+            "published": True,
+        }
+
+    # --------------------------------------------------------
+    # NADA PUBLICADO
+    # --------------------------------------------------------
 
     return {
         "currency": "USD",
@@ -349,9 +427,47 @@ def extract_salary(text):
     }
 
 
+def normalize_salary_period(period):
+    """
+    Normaliza período salarial.
+    """
+
+    if not period:
+        return "unknown"
+
+    period = period.lower()
+
+    if period in {
+        "hour",
+        "hr",
+        "hourly",
+    }:
+        return "hour"
+
+    if period in {
+        "year",
+        "annual",
+        "annually",
+    }:
+        return "year"
+
+    if period in {
+        "month",
+        "monthly",
+    }:
+        return "month"
+
+    return "unknown"
+
+
+# ============================================================
+# EMPLOYMENT TYPE
+# ============================================================
+
 def extract_employment_type(text):
     """
-    Detecta el tipo de empleo cuando aparece explícitamente.
+    Detecta tipo de empleo solamente cuando aparece
+    explícitamente.
     """
 
     if not text:
@@ -359,246 +475,513 @@ def extract_employment_type(text):
 
     lowered = text.lower()
 
-    patterns = [
-        (
-            "Full-time",
-            [
-                "full-time",
-                "full time",
-                "fulltime",
-            ],
-        ),
-        (
-            "Part-time",
-            [
-                "part-time",
-                "part time",
-                "parttime",
-            ],
-        ),
-        (
-            "Contract",
-            [
-                "contract position",
-                "contract role",
-                "contractor position",
-            ],
-        ),
-        (
-            "Temporary",
-            [
-                "temporary position",
-                "temporary role",
-                "temporary job",
-            ],
-        ),
-        (
-            "Internship",
-            [
-                "internship",
-                "intern position",
-                "intern role",
-            ],
-        ),
-    ]
+    # Full-time
+    if re.search(
+        r"\bfull[- ]time\b",
+        lowered,
+    ):
+        return "Full-time"
 
-    for employment_type, keywords in patterns:
-        for keyword in keywords:
-            if keyword in lowered:
-                return employment_type
+    # Part-time
+    if re.search(
+        r"\bpart[- ]time\b",
+        lowered,
+    ):
+        return "Part-time"
+
+    # Internship
+    if re.search(
+        r"\binternship\b|\bintern position\b|\bintern role\b",
+        lowered,
+    ):
+        return "Internship"
+
+    # Temporary
+    if re.search(
+        r"\btemporary position\b|\btemporary role\b|\btemporary job\b",
+        lowered,
+    ):
+        return "Temporary"
+
+    # Contract
+    if re.search(
+        r"\bcontract position\b|\bcontract role\b|\bcontractor position\b",
+        lowered,
+    ):
+        return "Contract"
 
     return "Unknown"
 
 
+# ============================================================
+# INDUSTRY
+# ============================================================
+
 def extract_industry(text, job=None):
     """
-    Determina industria de forma conservadora.
+    Determina la industria del puesto.
+
+    Prioridad:
+    1. Título
+    2. Departamento
+    3. Señales fuertes del contenido
+    4. Señales generales
+
+    Esto evita que beneficios como healthcare/medical
+    conviertan un puesto tecnológico en Healthcare.
     """
 
-    combined = text or ""
+    title = ""
+
+    department = ""
 
     if job:
-        combined += " "
-        combined += str(
+        title = str(
             job.get("title") or ""
         )
 
-        combined += " "
-        combined += str(
+        department = str(
             job.get("department") or ""
         )
 
-    lowered = combined.lower()
+    title_lower = title.lower()
+    department_lower = department.lower()
 
-    industry_keywords = [
-        (
-            "Aviation",
-            [
-                "aviation",
-                "aircraft",
-                "airline",
-                "airport",
-                "aerospace",
-            ],
-        ),
-        (
-            "Manufacturing",
-            [
-                "manufacturing",
-                "production",
-                "factory",
-            ],
-        ),
-        (
-            "Logistics",
-            [
-                "logistics",
-                "warehouse",
-                "supply chain",
-            ],
-        ),
-        (
-            "Healthcare",
-            [
-                "healthcare",
-                "hospital",
-                "medical",
-                "clinical",
-            ],
-        ),
-        (
-            "Hospitality",
-            [
-                "hospitality",
-                "hotel",
-                "resort",
-            ],
-        ),
-        (
-            "Restaurants",
-            [
-                "restaurant",
-                "food service",
-            ],
-        ),
-        (
-            "Retail",
-            [
-                "retail",
-                "store associate",
-            ],
-        ),
-        (
-            "Technology",
-            [
-                "software",
-                "technology",
-                "engineering",
-                "developer",
-                "developer",
-                "data science",
-                "artificial intelligence",
-                "machine learning",
-                "llm",
-                "information systems",
-                "systems analyst",
-            ],
-        ),
-        (
-            "Construction",
-            [
-                "construction",
-                "carpentry",
-                "concrete",
-            ],
-        ),
-        (
-            "Maintenance",
-            [
-                "maintenance",
-                "mechanic",
-                "technician",
-            ],
-        ),
-        (
-            "Transportation",
-            [
-                "transportation",
-                "driver",
-                "delivery",
-                "trucking",
-            ],
-        ),
-        (
-            "Customer Service",
-            [
-                "customer service",
-                "customer support",
-            ],
-        ),
-        (
-            "Administrative",
-            [
-                "administrative",
-                "administration",
-                "office assistant",
-            ],
-        ),
-        (
-            "Finance",
-            [
-                "finance",
-                "financial",
-                "accounting",
-            ],
-        ),
-        (
-            "Education",
-            [
-                "education",
-                "teacher",
-                "school",
-                "university",
-            ],
-        ),
-        (
-            "Government",
-            [
-                "government",
-                "federal",
-                "municipal",
-            ],
-        ),
-        (
-            "Security",
-            [
-                "security",
-                "security officer",
-            ],
-        ),
-        (
-            "Sales",
-            [
-                "sales",
-                "sales representative",
-            ],
-        ),
-        (
-            "Engineering",
-            [
-                "engineering",
-                "engineer",
-            ],
-        ),
+    content_lower = (
+        text or ""
+    ).lower()
+
+    # --------------------------------------------------------
+    # TECHNOLOGY - PRIORIDAD MUY ALTA
+    # --------------------------------------------------------
+
+    technology_title_terms = [
+        "software",
+        "developer",
+        "engineer",
+        "engineering",
+        "ai",
+        "artificial intelligence",
+        "machine learning",
+        "data scientist",
+        "data engineer",
+        "systems analyst",
+        "systems administrator",
+        "information technology",
+        "it ",
+        "technology",
+        "technical",
+        "devops",
+        "cloud",
+        "cybersecurity",
+        "web developer",
+        "ux engineer",
+        "software architect",
     ]
 
-    for industry, keywords in industry_keywords:
-        for keyword in keywords:
-            if keyword in lowered:
-                return industry
+    if any(
+        term in title_lower
+        for term in technology_title_terms
+    ):
+        return "Technology"
+
+    if any(
+        term in department_lower
+        for term in [
+            "technology",
+            "engineering",
+            "product technology",
+            "information technology",
+            "software",
+            "data",
+        ]
+    ):
+        return "Technology"
+
+    # --------------------------------------------------------
+    # AVIATION
+    # --------------------------------------------------------
+
+    aviation_terms = [
+        "aviation",
+        "aircraft",
+        "airline",
+        "airport",
+        "aerospace",
+        "flight operations",
+        "air cargo",
+    ]
+
+    if any(
+        term in title_lower
+        for term in aviation_terms
+    ):
+        return "Aviation"
+
+    # --------------------------------------------------------
+    # MANUFACTURING
+    # --------------------------------------------------------
+
+    manufacturing_terms = [
+        "manufacturing",
+        "production",
+        "assembly",
+        "fabrication",
+        "machine operator",
+        "production operator",
+    ]
+
+    if any(
+        term in title_lower
+        for term in manufacturing_terms
+    ):
+        return "Manufacturing"
+
+    # --------------------------------------------------------
+    # LOGISTICS
+    # --------------------------------------------------------
+
+    logistics_terms = [
+        "logistics",
+        "warehouse",
+        "supply chain",
+        "inventory",
+        "shipping",
+        "receiving",
+        "distribution",
+    ]
+
+    if any(
+        term in title_lower
+        for term in logistics_terms
+    ):
+        return "Logistics"
+
+    # --------------------------------------------------------
+    # HEALTHCARE
+    # --------------------------------------------------------
+
+    healthcare_title_terms = [
+        "nurse",
+        "nursing",
+        "medical assistant",
+        "medical technician",
+        "healthcare",
+        "health care",
+        "clinical",
+        "pharmacy",
+        "pharmacist",
+        "therapist",
+        "physician",
+        "doctor",
+        "radiology",
+        "laboratory technician",
+        "patient care",
+    ]
+
+    if any(
+        term in title_lower
+        for term in healthcare_title_terms
+    ):
+        return "Healthcare"
+
+    # --------------------------------------------------------
+    # CONSTRUCTION
+    # --------------------------------------------------------
+
+    construction_terms = [
+        "construction",
+        "carpenter",
+        "electrician",
+        "plumber",
+        "welder",
+        "concrete",
+        "mason",
+        "roofer",
+    ]
+
+    if any(
+        term in title_lower
+        for term in construction_terms
+    ):
+        return "Construction"
+
+    # --------------------------------------------------------
+    # MAINTENANCE
+    # --------------------------------------------------------
+
+    maintenance_terms = [
+        "maintenance",
+        "mechanic",
+        "maintenance technician",
+        "maintenance mechanic",
+        "industrial technician",
+        "equipment technician",
+    ]
+
+    if any(
+        term in title_lower
+        for term in maintenance_terms
+    ):
+        return "Maintenance"
+
+    # --------------------------------------------------------
+    # TRANSPORTATION
+    # --------------------------------------------------------
+
+    transportation_terms = [
+        "driver",
+        "delivery driver",
+        "transportation",
+        "truck driver",
+        "courier",
+        "dispatcher",
+    ]
+
+    if any(
+        term in title_lower
+        for term in transportation_terms
+    ):
+        return "Transportation"
+
+    # --------------------------------------------------------
+    # RETAIL
+    # --------------------------------------------------------
+
+    retail_terms = [
+        "retail",
+        "store associate",
+        "sales associate",
+        "cashier",
+        "store manager",
+    ]
+
+    if any(
+        term in title_lower
+        for term in retail_terms
+    ):
+        return "Retail"
+
+    # --------------------------------------------------------
+    # RESTAURANTS / FOOD SERVICE
+    # --------------------------------------------------------
+
+    restaurant_terms = [
+        "restaurant",
+        "server",
+        "waiter",
+        "waitress",
+        "cook",
+        "chef",
+        "food service",
+        "line cook",
+        "dishwasher",
+    ]
+
+    if any(
+        term in title_lower
+        for term in restaurant_terms
+    ):
+        return "Restaurants"
+
+    # --------------------------------------------------------
+    # HOSPITALITY
+    # --------------------------------------------------------
+
+    hospitality_terms = [
+        "hotel",
+        "resort",
+        "hospitality",
+        "front desk",
+        "guest services",
+        "housekeeping",
+    ]
+
+    if any(
+        term in title_lower
+        for term in hospitality_terms
+    ):
+        return "Hospitality"
+
+    # --------------------------------------------------------
+    # SECURITY
+    # --------------------------------------------------------
+
+    security_terms = [
+        "security",
+        "security officer",
+        "security guard",
+    ]
+
+    if any(
+        term in title_lower
+        for term in security_terms
+    ):
+        return "Security"
+
+    # --------------------------------------------------------
+    # SALES
+    # --------------------------------------------------------
+
+    sales_terms = [
+        "sales",
+        "account executive",
+        "sales representative",
+        "business development",
+    ]
+
+    if any(
+        term in title_lower
+        for term in sales_terms
+    ):
+        return "Sales"
+
+    # --------------------------------------------------------
+    # CUSTOMER SERVICE
+    # --------------------------------------------------------
+
+    customer_service_terms = [
+        "customer service",
+        "customer support",
+        "call center",
+        "contact center",
+    ]
+
+    if any(
+        term in title_lower
+        for term in customer_service_terms
+    ):
+        return "Customer Service"
+
+    # --------------------------------------------------------
+    # FINANCE
+    # --------------------------------------------------------
+
+    finance_terms = [
+        "accountant",
+        "accounting",
+        "finance",
+        "financial analyst",
+        "financial",
+        "bookkeeper",
+        "banking",
+    ]
+
+    if any(
+        term in title_lower
+        for term in finance_terms
+    ):
+        return "Finance"
+
+    # --------------------------------------------------------
+    # ADMINISTRATIVE
+    # --------------------------------------------------------
+
+    administrative_terms = [
+        "administrative",
+        "administration",
+        "office assistant",
+        "receptionist",
+        "executive assistant",
+        "office coordinator",
+    ]
+
+    if any(
+        term in title_lower
+        for term in administrative_terms
+    ):
+        return "Administrative"
+
+    # --------------------------------------------------------
+    # EDUCATION
+    # --------------------------------------------------------
+
+    education_terms = [
+        "teacher",
+        "professor",
+        "instructor",
+        "education",
+        "school counselor",
+        "academic",
+    ]
+
+    if any(
+        term in title_lower
+        for term in education_terms
+    ):
+        return "Education"
+
+    # --------------------------------------------------------
+    # GOVERNMENT
+    # --------------------------------------------------------
+
+    government_terms = [
+        "government",
+        "federal",
+        "municipal",
+        "public sector",
+    ]
+
+    if any(
+        term in title_lower
+        for term in government_terms
+    ):
+        return "Government"
+
+    # --------------------------------------------------------
+    # ENGINEERING
+    # --------------------------------------------------------
+
+    engineering_terms = [
+        "engineer",
+        "engineering",
+    ]
+
+    if any(
+        term in title_lower
+        for term in engineering_terms
+    ):
+        return "Engineering"
+
+    # --------------------------------------------------------
+    # CONTENT-BASED TECHNOLOGY
+    # --------------------------------------------------------
+
+    strong_technology_content = [
+        "software engineering",
+        "software development",
+        "javascript",
+        "typescript",
+        "python",
+        "sql",
+        "llm",
+        "large language model",
+        "machine learning",
+        "artificial intelligence",
+        "rest api",
+        "soap api",
+        "ci/cd",
+        "database modeling",
+        "data modeling",
+        "cloud infrastructure",
+        "devops",
+    ]
+
+    technology_score = sum(
+        1
+        for term in strong_technology_content
+        if term in content_lower
+    )
+
+    if technology_score >= 2:
+        return "Technology"
 
     return "Other"
 
+
+# ============================================================
+# WORK MODE
+# ============================================================
 
 def extract_work_mode(text):
     """
@@ -610,33 +993,47 @@ def extract_work_mode(text):
 
     lowered = text.lower()
 
+    # Hybrid tiene prioridad si aparece explícitamente.
     if (
-        "hybrid" in lowered
-        or "li-hybrid" in lowered
+        "li-hybrid" in lowered
+        or re.search(
+            r"\bhybrid\b",
+            lowered,
+        )
     ):
         return "Hybrid"
 
     if (
-        "remote" in lowered
-        or "li-remote" in lowered
+        "li-remote" in lowered
+        or re.search(
+            r"\bremote\b",
+            lowered,
+        )
         or "work from home" in lowered
     ):
         return "Remote"
 
     if (
-        "on-site" in lowered
+        "li-onsite" in lowered
+        or re.search(
+            r"\bon[- ]site\b",
+            lowered,
+        )
         or "onsite" in lowered
         or "on site" in lowered
-        or "li-onsite" in lowered
     ):
         return "On-site"
 
     return "Unknown"
 
 
+# ============================================================
+# EDUCATION
+# ============================================================
+
 def extract_education(text):
     """
-    Extrae niveles educativos mencionados.
+    Extrae niveles educativos.
     """
 
     if not text:
@@ -685,16 +1082,23 @@ def extract_education(text):
     return education
 
 
+# ============================================================
+# EXPERIENCE
+# ============================================================
+
 def extract_experience(text):
     """
-    Extrae experiencia requerida sin convertir rangos en máximos.
+    Extrae experiencia requerida.
 
     Ejemplos:
 
-    3–5 years -> 3-5 years
-    5+ years -> 5+ years
+    3–5 years
+    -> 3-5 years
 
-    También conserva detalles adicionales en experience_details.
+    5+ years
+    -> 5+ years
+
+    También conserva requisitos adicionales.
     """
 
     if not text:
@@ -709,18 +1113,18 @@ def extract_experience(text):
 
     matches = []
 
+    # --------------------------------------------------------
+    # RANGOS
+    # --------------------------------------------------------
+
     range_pattern = re.compile(
         r"\b(\d+)\s*-\s*(\d+)\s+years?\b",
         flags=re.IGNORECASE,
     )
 
-    plus_pattern = re.compile(
-        r"\b(\d+)\s*\+\s*years?\b",
-        flags=re.IGNORECASE,
-    )
-
-    # Primero encontramos todos los rangos.
-    for match in range_pattern.finditer(normalized):
+    for match in range_pattern.finditer(
+        normalized
+    ):
         minimum = match.group(1)
         maximum = match.group(2)
 
@@ -741,13 +1145,62 @@ def extract_experience(text):
         matches.append(
             {
                 "start": match.start(),
-                "value": f"{minimum}-{maximum} years",
+                "value": (
+                    f"{minimum}-{maximum} years"
+                ),
                 "context": context,
             }
         )
 
-    # Después encontramos X+ years.
-    for match in plus_pattern.finditer(normalized):
+    # --------------------------------------------------------
+    # X+ YEARS
+    # --------------------------------------------------------
+
+    plus_pattern = re.compile(
+        r"\b(\d+)\s*\+\s*years?\b",
+        flags=re.IGNORECASE,
+    )
+
+    for match in plus_pattern.finditer(
+        normalized
+    ):
+        amount = match.group(1)
+
+        start = max(
+            0,
+            match.start() - 80,
+        )
+
+        end = min(
+            len(normalized),
+            match.end() + 120,
+        )
+
+        context = normalize_space(
+            normalized[start:end]
+        )
+
+        matches.append(
+            {
+                "start": match.start(),
+                "value": f"{amount}+ years",
+                "context": context,
+            }
+        )
+
+    # --------------------------------------------------------
+    # MINIMUM / AT LEAST
+    # --------------------------------------------------------
+
+    minimum_pattern = re.compile(
+        r"\b(?:minimum of|at least)\s+"
+        r"(\d+)\s+years?\b",
+        flags=re.IGNORECASE,
+    )
+
+    for match in minimum_pattern.finditer(
+        normalized
+    ):
         amount = match.group(1)
 
         start = max(
@@ -773,72 +1226,59 @@ def extract_experience(text):
         )
 
     if not matches:
-        # Caso adicional: "minimum of 5 years"
-        minimum_pattern = re.compile(
-            r"\b(?:minimum of|at least)\s+"
-            r"(\d+)\s+years?\b",
-            flags=re.IGNORECASE,
-        )
-
-        for match in minimum_pattern.finditer(
-            normalized
-        ):
-            amount = match.group(1)
-
-            start = max(
-                0,
-                match.start() - 80,
-            )
-
-            end = min(
-                len(normalized),
-                match.end() + 120,
-            )
-
-            context = normalize_space(
-                normalized[start:end]
-            )
-
-            matches.append(
-                {
-                    "start": match.start(),
-                    "value": f"{amount}+ years",
-                    "context": context,
-                }
-            )
-
-    if not matches:
         return None, []
 
-    matches.sort(
-        key=lambda item: item["start"]
-    )
-
-    primary = matches[0]["value"]
-
-    details = []
+    # Eliminar duplicados por posición/valor.
+    unique = []
 
     seen = set()
 
-    for match in matches:
-        detail = match["value"]
+    for item in sorted(
+        matches,
+        key=lambda x: x["start"],
+    ):
+        key = (
+            item["start"],
+            item["value"],
+        )
 
-        if detail not in seen:
-            details.append(
-                {
-                    "experience": detail,
-                    "context": match["context"],
-                }
-            )
+        if key not in seen:
+            unique.append(item)
+            seen.add(key)
 
-            seen.add(detail)
+    # El primer requisito explícito suele ser
+    # el requisito principal.
+    primary = unique[0]["value"]
+
+    details = []
+
+    seen_values = set()
+
+    for item in unique:
+        value = item["value"]
+
+        if value in seen_values:
+            continue
+
+        details.append(
+            {
+                "experience": value,
+                "context": item["context"],
+            }
+        )
+
+        seen_values.add(value)
 
     return primary, details
 
 
+# ============================================================
+# LICENSES
+# ============================================================
+
 def extract_licenses(text):
     """
-    Extrae licencias/certificaciones importantes.
+    Extrae licencias/certificaciones.
     """
 
     if not text:
@@ -898,6 +1338,10 @@ def extract_licenses(text):
     return licenses
 
 
+# ============================================================
+# REQUIREMENTS
+# ============================================================
+
 def extract_requirements(text):
     """
     Construye requisitos estructurados.
@@ -908,16 +1352,24 @@ def extract_requirements(text):
     )
 
     return {
-        "education": extract_education(text),
+        "education": extract_education(
+            text
+        ),
         "experience": experience,
         "experience_details": experience_details,
-        "licenses": extract_licenses(text),
+        "licenses": extract_licenses(
+            text
+        ),
     }
 
 
+# ============================================================
+# DATES
+# ============================================================
+
 def parse_date_value(value):
     """
-    Convierte una fecha conocida a ISO cuando es posible.
+    Convierte fechas a ISO cuando es posible.
     """
 
     if value is None:
@@ -938,7 +1390,7 @@ def parse_date_value(value):
     if not value:
         return None
 
-    # Ya parece ISO.
+    # ISO 8601
     try:
         normalized = value.replace(
             "Z",
@@ -959,7 +1411,6 @@ def parse_date_value(value):
     except ValueError:
         pass
 
-    # Fechas simples.
     date_formats = [
         "%Y-%m-%d",
         "%Y/%m/%d",
@@ -988,11 +1439,7 @@ def parse_date_value(value):
 
 def extract_dates(job):
     """
-    Recupera las fechas de publicación y actualización
-    desde los diferentes nombres de campos que puede entregar
-    Greenhouse.
-
-    No genera fechas artificiales.
+    Recupera fechas publicadas por Greenhouse.
     """
 
     posted_candidates = [
@@ -1041,9 +1488,17 @@ def extract_dates(job):
     return posted_date, updated_date
 
 
-def build_source(job, company, board_token):
+# ============================================================
+# SOURCE
+# ============================================================
+
+def build_source(
+    job,
+    company,
+    board_token,
+):
     """
-    Construye la información de fuente.
+    Construye información de la fuente.
     """
 
     job_id = job.get("id")
@@ -1059,15 +1514,17 @@ def build_source(job, company, board_token):
             f"{board_token}/jobs/{job_id}"
         )
 
-    application_url = absolute_url
-
     return {
         "name": "Greenhouse",
         "type": "job_board_api",
         "url": absolute_url,
-        "application_url": application_url,
+        "application_url": absolute_url,
     }
 
+
+# ============================================================
+# NORMALIZER
+# ============================================================
 
 def normalize_greenhouse_job(
     job,
@@ -1075,13 +1532,17 @@ def normalize_greenhouse_job(
     board_token,
 ):
     """
-    Convierte un job de Greenhouse al esquema estándar
+    Convierte una vacante Greenhouse al esquema estándar
     del PR Intelligence Agent.
     """
 
-    content = get_job_content(job)
+    content = get_job_content(
+        job
+    )
 
-    location = extract_location(job)
+    location = extract_location(
+        job
+    )
 
     salary = extract_salary(
         content
@@ -1104,39 +1565,29 @@ def normalize_greenhouse_job(
 
     normalized = {
         "company": company,
+
         "title": title,
+
         "job_id": (
             f"greenhouse-{board_token}-{job_id}"
             if job_id
             else f"greenhouse-{board_token}"
         ),
-        "description": content,
-        "location": location,
-        "salary": salary,
-        "employment_type": extract_employment_type(
-            content
-        ),
-        "industry": extract_industry(
-            content,
-            job,
-        ),
-        "work_mode": extract_work_mode(
-            content
-        ),
-        "requirements": requirements,
-        "posted_date": posted_date,
-        "updated_date": updated_date,
-        "source": build_source(
-            job,
-            company,
-            board_token,
-        ),
-        "verification": {
-            "status": "source_verified",
-            "checked_at": datetime.now(
-                timezone.utc
-            ).isoformat(),
-        },
-    }
 
-    return normalized
+        "description": content,
+
+        "location": location,
+
+        "salary": salary,
+
+        "employment_type": (
+            extract_employment_type(
+                content
+            )
+        ),
+
+        "industry": (
+            extract_industry(
+                content,
+                job,
+            )
