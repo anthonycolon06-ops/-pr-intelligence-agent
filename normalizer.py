@@ -1591,3 +1591,32 @@ def normalize_greenhouse_job(
                 content,
                 job,
             )
+        ),
+
+        "work_mode": (
+            extract_work_mode(
+                content
+            )
+        ),
+
+        "requirements": requirements,
+
+        "posted_date": posted_date,
+
+        "updated_date": updated_date,
+
+        "source": build_source(
+            job,
+            company,
+            board_token,
+        ),
+
+        "verification": {
+            "status": "source_verified",
+            "checked_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
+        },
+    }
+
+    return normalized
