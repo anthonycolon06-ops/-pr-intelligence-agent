@@ -1,335 +1,242 @@
+
 from flask import Flask, request, jsonify
 import json
 import os
 
 from greenhouse import get_greenhouse_jobs
 from normalizer import normalize_greenhouse_job
+from lever import get_lever_jobs
+from sources import GREENHOUSE_BOARDS, LEVER_BOARDS
 
 app = Flask(__name__)
 
-VERSION = "1.6.0"
-
-
-# ============================================================
-# US STATES
-# ============================================================
+VERSION = "1.7.0"
 
 US_STATES = {
-    "alabama": "AL",
-    "alaska": "AK",
-    "arizona": "AZ",
-    "arkansas": "AR",
-    "california": "CA",
-    "colorado": "CO",
-    "connecticut": "CT",
-    "delaware": "DE",
-    "florida": "FL",
-    "georgia": "GA",
-    "hawaii": "HI",
-    "idaho": "ID",
-    "illinois": "IL",
-    "indiana": "IN",
-    "iowa": "IA",
-    "kansas": "KS",
-    "kentucky": "KY",
-    "louisiana": "LA",
-    "maine": "ME",
-    "maryland": "MD",
-    "massachusetts": "MA",
-    "michigan": "MI",
-    "minnesota": "MN",
-    "mississippi": "MS",
-    "missouri": "MO",
-    "montana": "MT",
-    "nebraska": "NE",
-    "nevada": "NV",
-    "new hampshire": "NH",
-    "new jersey": "NJ",
-    "new mexico": "NM",
-    "new york": "NY",
-    "north carolina": "NC",
-    "north dakota": "ND",
-    "ohio": "OH",
-    "oklahoma": "OK",
-    "oregon": "OR",
-    "pennsylvania": "PA",
-    "rhode island": "RI",
-    "south carolina": "SC",
-    "south dakota": "SD",
-    "tennessee": "TN",
-    "texas": "TX",
-    "utah": "UT",
-    "vermont": "VT",
-    "virginia": "VA",
-    "washington": "WA",
-    "west virginia": "WV",
-    "wisconsin": "WI",
-    "wyoming": "WY",
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ",
+    "arkansas": "AR", "california": "CA", "colorado": "CO",
+    "connecticut": "CT", "delaware": "DE", "florida": "FL",
+    "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE",
+    "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA",
+    "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX",
+    "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
     "district of columbia": "DC",
 }
 
-STATE_CODE_TO_NAME = {
+STATE_NAMES = {
     code.lower(): name
     for name, code in US_STATES.items()
 }
 
 
-# ============================================================
-# JOB STORAGE
-# ============================================================
-
 def load_jobs():
     try:
-        with open(
-            "jobs.json",
-            "r",
-            encoding="utf-8"
-        ) as file:
-
+        with open("jobs.json", "r", encoding="utf-8") as file:
             data = json.load(file)
 
-            if isinstance(data, dict):
-                return data.get("jobs", [])
+        if isinstance(data, dict):
+            jobs = data.get("jobs", [])
+            return jobs if isinstance(jobs, list) else []
 
-            if isinstance(data, list):
-                return data
+        return data if isinstance(data, list) else []
 
-    except Exception:
+    except (OSError, ValueError, TypeError):
         return []
 
-    return []
 
-
-# ============================================================
-# GREENHOUSE
-# ============================================================
-
-def load_greenhouse_jobs(board_token="livecareer"):
-
-    raw_jobs = get_greenhouse_jobs(
-        board_token
-    )
-
-    normalized_jobs = []
+def normalize_greenhouse_board(board):
+    raw_jobs = get_greenhouse_jobs(board)
+    normalized = []
 
     for job in raw_jobs:
-
         try:
+            item = normalize_greenhouse_job(job, board, board)
+            if item:
+                normalized.append(item)
+        except Exception as error:
+            print(f"Could not normalize Greenhouse job: {error}")
 
-            normalized_job = normalize_greenhouse_job(
-                job,
-                "BOLD",
-                board_token
-            )
-
-            normalized_jobs.append(
-                normalized_job
-            )
-
-        except Exception:
-            continue
-
-    return normalized_jobs
+    return normalized
 
 
 def load_all_jobs():
+    combined = []
+    source_status = []
 
-    jobs = []
+    for board in GREENHOUSE_BOARDS:
+        try:
+            jobs = normalize_greenhouse_board(board)
+            combined.extend(jobs)
+            source_status.append({
+                "source": "Greenhouse",
+                "board": board,
+                "status": "ok",
+                "count": len(jobs),
+            })
+        except Exception as error:
+            print(f"Greenhouse board {board} failed: {error}")
+            source_status.append({
+                "source": "Greenhouse",
+                "board": board,
+                "status": "error",
+                "error": str(error),
+                "count": 0,
+            })
 
-    # --------------------------------------------------------
-    # LIVE GREENHOUSE DATA
-    # --------------------------------------------------------
+    for board in LEVER_BOARDS:
+        try:
+            jobs = get_lever_jobs(board)
+            combined.extend(jobs)
+            source_status.append({
+                "source": "Lever",
+                "board": board,
+                "status": "ok",
+                "count": len(jobs),
+            })
+        except Exception as error:
+            print(f"Lever board {board} failed: {error}")
+            source_status.append({
+                "source": "Lever",
+                "board": board,
+                "status": "error",
+                "error": str(error),
+                "count": 0,
+            })
 
-    try:
+    # Add saved jobs as a fallback.
+    combined.extend(load_jobs())
 
-        greenhouse_jobs = load_greenhouse_jobs(
-            "livecareer"
-        )
+    # Deduplicate by source job ID. Keep the first occurrence.
+    unique_jobs = []
+    seen_ids = set()
 
-        jobs.extend(
-            greenhouse_jobs
-        )
-
-    except Exception:
-        pass
-
-    # --------------------------------------------------------
-    # STATIC BACKUP
-    # --------------------------------------------------------
-
-    stored_jobs = load_jobs()
-
-    existing_ids = {
-        str(job.get("job_id"))
-        for job in jobs
-        if job.get("job_id")
-    }
-
-    for job in stored_jobs:
-
-        job_id = str(
-            job.get(
-                "job_id",
-                ""
-            )
-        )
-
-        if job_id and job_id in existing_ids:
+    for job in combined:
+        if not isinstance(job, dict):
             continue
 
-        jobs.append(job)
+        job_id = job.get("job_id")
 
-    return jobs
+        if job_id:
+            key = str(job_id).strip().lower()
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+
+        unique_jobs.append(job)
+
+    return unique_jobs, source_status
 
 
-# ============================================================
-# LOCATION
-# ============================================================
-
-def location_matches(
-    job,
-    requested_location
-):
-
-    query = str(
-        requested_location
-    ).strip().lower()
+def location_matches(job, requested_location):
+    query = str(requested_location or "").strip().lower()
 
     if not query:
         return True
 
-    location = job.get(
-        "location",
-        {}
-    )
+    location = job.get("location", {})
 
     if not isinstance(location, dict):
+        return query in str(location).lower()
 
-        return (
-            query
-            in str(location).lower()
-        )
-
-    municipality = str(
-        location.get(
-            "municipality",
-            ""
-        )
-    ).strip().lower()
-
-    region = str(
-        location.get(
-            "region",
-            ""
-        )
-    ).strip().lower()
-
-    country = str(
-        location.get(
-            "country",
-            ""
-        )
-    ).strip().lower()
-
-    raw = str(
-        location.get(
-            "raw",
-            ""
-        )
-    ).strip().lower()
+    municipality = str(location.get("municipality") or "").strip().lower()
+    region = str(location.get("region") or "").strip().lower()
+    country = str(location.get("country") or "").strip().lower()
+    raw = str(location.get("raw") or "").strip().lower()
 
     location_text = " ".join([
-        municipality,
-        region,
-        country,
-        raw
+        municipality, region, country, raw
     ])
 
-    # ========================================================
-    # PUERTO RICO
-    # ========================================================
-
-    puerto_rico_queries = {
-        "puerto rico",
-        "puerto-rico",
-        "pr"
-    }
-
-    if query in puerto_rico_queries:
-
+    # Puerto Rico means jobs physically located in Puerto Rico.
+    if query in {"puerto rico", "puerto-rico", "pr"}:
         return (
             country == "pr"
             or region == "puerto rico"
             or "puerto rico" in location_text
         )
 
-    # ========================================================
-    # UNITED STATES
-    # ========================================================
-
-    united_states_queries = {
-        "united states",
-        "united states of america",
-        "usa",
-        "us",
-        "u.s.",
-        "u.s.a."
-    }
-
-    if query in united_states_queries:
-
+    # United States means US-located jobs, including state locations.
+    if query in {
+        "united states", "united states of america",
+        "usa", "us", "u.s.", "u.s.a."
+    }:
         return (
-            country == "us"
-            or country == "usa"
-            or country == "united states"
+            country in {"us", "usa", "united states"}
             or "united states" in location_text
+            or "united states" in raw
             or "usa" in location_text
         )
 
-    # ========================================================
-    # STATE NAME <-> STATE CODE
-    # ========================================================
+    # State name and abbreviation are interchangeable.
+    state_code = US_STATES.get(query)
 
-    requested_state_code = None
+    if not state_code and query in STATE_NAMES:
+        state_code = query.upper()
 
-    # User searched "Texas"
-    if query in US_STATES:
-
-        requested_state_code = (
-            US_STATES[query]
-            .lower()
-        )
-
-    # User searched "TX"
-    elif query in STATE_CODE_TO_NAME:
-
-        requested_state_code = query
-
-    if requested_state_code:
-
-        requested_state_name = (
-            STATE_CODE_TO_NAME[
-                requested_state_code
-            ]
-        )
+    if state_code:
+        state_name = STATE_NAMES.get(state_code.lower(), "").lower()
 
         return (
-            region == requested_state_code
-            or region == requested_state_name
-            or requested_state_code in raw.split()
-            or requested_state_name in location_text
+            region == state_code.lower()
+            or region == state_name
+            or state_name in location_text
+            or any(
+                token == state_code.lower()
+                for token in raw.replace(",", " ").split()
+            )
         )
 
-    # ========================================================
-    # GENERAL LOCATION
-    # ========================================================
+    # City, state searches, e.g. "Austin, Texas" or "Austin, TX".
+    if "," in query:
+        parts = [part.strip() for part in query.split(",") if part.strip()]
+
+        if len(parts) >= 2:
+            city_query = parts[0]
+            state_query = parts[-1]
+            requested_code = US_STATES.get(state_query)
+
+            if not requested_code and state_query in STATE_NAMES:
+                requested_code = state_query.upper()
+
+            city_matches = city_query in municipality or city_query in raw
+
+            if requested_code:
+                state_matches = (
+                    region == requested_code.lower()
+                    or requested_code.lower() in raw.split()
+                    or STATE_NAMES.get(requested_code.lower(), "").lower()
+                    in location_text
+                )
+                return city_matches and state_matches
 
     return query in location_text
 
 
-# ============================================================
-# FILTERS
-# ============================================================
+def salary_value(job, key):
+    salary = job.get("salary") or {}
+
+    if not isinstance(salary, dict):
+        return None
+
+    value = salary.get(key)
+
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
 
 def filter_jobs(
     jobs,
@@ -337,457 +244,214 @@ def filter_jobs(
     industry="",
     employment_type="",
     min_salary=None,
-    max_salary=None
+    max_salary=None,
 ):
-
     results = list(jobs)
 
-    # --------------------------------------------------------
-    # LOCATION
-    # --------------------------------------------------------
-
     if location:
-
         results = [
-            job
-            for job in results
-            if location_matches(
-                job,
-                location
-            )
+            job for job in results
+            if location_matches(job, location)
         ]
-
-    # --------------------------------------------------------
-    # INDUSTRY
-    # --------------------------------------------------------
 
     if industry:
-
-        industry_lower = (
-            industry.strip().lower()
-        )
-
+        query = industry.strip().lower()
         results = [
-            job
-            for job in results
-            if industry_lower
-            in str(
-                job.get(
-                    "industry",
-                    ""
-                )
-            ).lower()
+            job for job in results
+            if query in str(job.get("industry") or "").lower()
         ]
-
-    # --------------------------------------------------------
-    # EMPLOYMENT TYPE
-    # --------------------------------------------------------
 
     if employment_type:
-
-        employment_lower = (
-            employment_type.strip().lower()
-        )
-
+        query = employment_type.strip().lower()
         results = [
-            job
-            for job in results
-            if employment_lower
-            in str(
-                job.get(
-                    "employment_type",
-                    ""
-                )
-            ).lower()
+            job for job in results
+            if query in str(job.get("employment_type") or "").lower()
         ]
 
-    # --------------------------------------------------------
-    # MINIMUM SALARY
-    # --------------------------------------------------------
-
     if min_salary is not None:
-
-        filtered = []
-
-        for job in results:
-
-            salary = job.get(
-                "salary",
-                {}
-            )
-
-            salary_max = salary.get(
-                "max"
-            )
-
+        results = [
+            job for job in results
             if (
-                salary_max is not None
-                and salary_max >= min_salary
-            ):
-                filtered.append(job)
-
-        results = filtered
-
-    # --------------------------------------------------------
-    # MAXIMUM SALARY
-    # --------------------------------------------------------
+                salary_value(job, "max") is not None
+                and salary_value(job, "max") >= min_salary
+            )
+        ]
 
     if max_salary is not None:
-
-        filtered = []
-
-        for job in results:
-
-            salary = job.get(
-                "salary",
-                {}
-            )
-
-            salary_min = salary.get(
-                "min"
-            )
-
+        results = [
+            job for job in results
             if (
-                salary_min is not None
-                and salary_min <= max_salary
-            ):
-                filtered.append(job)
-
-        results = filtered
+                salary_value(job, "min") is not None
+                and salary_value(job, "min") <= max_salary
+            )
+        ]
 
     return results
 
 
-# ============================================================
-# HEALTH
-# ============================================================
-
 @app.route("/")
 def home():
-
     return jsonify({
-
-        "agent":
-            "PR Intelligence Agent",
-
-        "status":
-            "online",
-
-        "version":
-            VERSION,
-
-        "description":
-            "Employment intelligence service "
-            "covering Puerto Rico and the "
-            "United States",
-
-        "coverage": [
-            "Puerto Rico",
-            "United States"
-        ]
-
+        "agent": "PR Intelligence Agent",
+        "status": "online",
+        "version": VERSION,
+        "description": (
+            "Employment intelligence API with multi-source job ingestion"
+        ),
+        "coverage": ["Puerto Rico", "United States"],
+        "sources": ["Greenhouse", "Lever", "jobs.json"],
+        "endpoints": [
+            "/jobs",
+            "/sources-test",
+            "/greenhouse-test",
+            "/.well-known/agent.json",
+        ],
     })
 
 
-# ============================================================
-# AGENT MANIFEST
-# ============================================================
-
 @app.route("/.well-known/agent.json")
 def agent_manifest():
-
     return jsonify({
-
-        "name":
-            "PR Intelligence Agent",
-
-        "description":
-            "Employment intelligence service "
-            "for AI agents covering Puerto Rico "
-            "and the United States.",
-
-        "version":
-            VERSION,
-
+        "name": "PR Intelligence Agent",
+        "description": (
+            "Multi-source employment intelligence service "
+            "with normalized job data and location filters."
+        ),
+        "version": VERSION,
         "capabilities": [
             "job_search",
             "salary_filtering",
             "location_filtering",
             "industry_filtering",
             "employment_type_filtering",
-            "job_intelligence"
+            "multi_source_ingestion",
+            "job_intelligence",
         ],
-
         "coverage": {
-
-            "primary_market":
-                "Puerto Rico",
-
-            "secondary_market":
-                "United States",
-
-            "countries": [
-                "Puerto Rico",
-                "United States"
-            ],
-
-            "industries":
-                "multiple",
-
-            "salary_ranges":
-                "all"
-
+            "primary_market": "Puerto Rico",
+            "secondary_market": "United States",
+            "countries": ["Puerto Rico", "United States"],
+            "industries": "multiple",
+            "salary_ranges": "all available source data",
         },
-
         "api": {
-
-            "base_path":
-                "/",
-
+            "base_path": "/",
             "endpoints": {
-
-                "health":
-                    "/",
-
-                "jobs":
-                    "/jobs",
-
-                "greenhouse_test":
-                    "/greenhouse-test"
-
-            }
-
+                "health": "/",
+                "jobs": "/jobs",
+                "sources_test": "/sources-test",
+                "greenhouse_test": "/greenhouse-test",
+            },
         },
-
         "pricing": {
-
-            "model":
-                "per_query",
-
-            "target_price_usd":
-                0.10
-
-        }
-
+            "model": "per_query",
+            "target_price_usd": 0.10,
+        },
     })
 
 
-# ============================================================
-# MAIN JOB API
-# ============================================================
-
 @app.route("/jobs")
-def jobs():
+def jobs_endpoint():
+    all_jobs, source_status = load_all_jobs()
 
-    all_jobs = load_all_jobs()
-
-    location = request.args.get(
-        "location",
-        ""
-    ).strip()
-
-    industry = request.args.get(
-        "industry",
-        ""
-    ).strip()
-
-    employment_type = request.args.get(
-        "employment_type",
-        ""
-    ).strip()
-
-    min_salary = request.args.get(
-        "min_salary",
-        type=float
-    )
-
-    max_salary = request.args.get(
-        "max_salary",
-        type=float
-    )
+    location = request.args.get("location", "").strip()
+    industry = request.args.get("industry", "").strip()
+    employment_type = request.args.get("employment_type", "").strip()
+    min_salary = request.args.get("min_salary", type=float)
+    max_salary = request.args.get("max_salary", type=float)
 
     results = filter_jobs(
-
         all_jobs,
-
         location=location,
-
         industry=industry,
-
         employment_type=employment_type,
-
         min_salary=min_salary,
-
-        max_salary=max_salary
-
+        max_salary=max_salary,
     )
 
     return jsonify({
-
-        "count":
-            len(results),
-
+        "count": len(results),
+        "total_loaded": len(all_jobs),
         "filters": {
-
-            "location":
-                location
-                if location
-                else None,
-
-            "industry":
-                industry
-                if industry
-                else None,
-
-            "employment_type":
-                employment_type
-                if employment_type
-                else None,
-
-            "min_salary":
-                min_salary,
-
-            "max_salary":
-                max_salary
-
+            "location": location or None,
+            "industry": industry or None,
+            "employment_type": employment_type or None,
+            "min_salary": min_salary,
+            "max_salary": max_salary,
         },
-
-        "coverage": [
-            "Puerto Rico",
-            "United States"
-        ],
-
-        "jobs":
-            results
-
+        "sources": source_status,
+        "jobs": results,
     })
 
 
-# ============================================================
-# GREENHOUSE TEST
-# ============================================================
+@app.route("/sources-test")
+def sources_test():
+    _, source_status = load_all_jobs()
+
+    return jsonify({
+        "version": VERSION,
+        "source_count": len(source_status),
+        "successful_sources": sum(
+            1 for source in source_status
+            if source["status"] == "ok"
+        ),
+        "failed_sources": sum(
+            1 for source in source_status
+            if source["status"] == "error"
+        ),
+        "sources": source_status,
+    })
+
 
 @app.route("/greenhouse-test")
 def greenhouse_test():
+    board = request.args.get("board", "").strip()
+    requested_location = request.args.get("location", "").strip()
 
-    board_token = request.args.get(
-        "board"
-    )
-
-    requested_location = request.args.get(
-        "location",
-        ""
-    ).strip()
-
-    if not board_token:
-
+    if not board:
         return jsonify({
-
-            "error":
-                "Missing board parameter",
-
-            "example":
-                "/greenhouse-test?board=livecareer"
-
+            "error": "Missing board parameter",
+            "example": "/greenhouse-test?board=livecareer",
         }), 400
 
     try:
-
-        raw_jobs = get_greenhouse_jobs(
-            board_token
-        )
-
+        raw_jobs = get_greenhouse_jobs(board)
         normalized_jobs = []
 
         for job in raw_jobs:
-
             try:
-
-                normalized_job = (
-                    normalize_greenhouse_job(
-                        job,
-                        "BOLD",
-                        board_token
-                    )
+                normalized = normalize_greenhouse_job(
+                    job, board, board
                 )
-
-                normalized_jobs.append(
-                    normalized_job
-                )
-
-            except Exception:
-                continue
+                if normalized:
+                    normalized_jobs.append(normalized)
+            except Exception as error:
+                print(f"Greenhouse normalization failed: {error}")
 
         if requested_location:
-
             normalized_jobs = [
-
-                job
-                for job in normalized_jobs
-                if location_matches(
-                    job,
-                    requested_location
-                )
-
+                job for job in normalized_jobs
+                if location_matches(job, requested_location)
             ]
 
         return jsonify({
-
-            "source":
-                "Greenhouse",
-
-            "company":
-                "BOLD",
-
-            "board":
-                board_token,
-
-            "count":
-                len(normalized_jobs),
-
+            "source": "Greenhouse",
+            "board": board,
+            "count": len(normalized_jobs),
             "filters": {
-
-                "location":
-                    requested_location
-                    if requested_location
-                    else None
-
+                "location": requested_location or None,
             },
-
-            "coverage": [
-                "Puerto Rico",
-                "United States"
-            ],
-
-            "jobs":
-                normalized_jobs
-
+            "jobs": normalized_jobs,
         })
 
     except Exception as error:
-
         return jsonify({
+            "error": str(error),
+            "source": "Greenhouse",
+            "board": board,
+        }), 502
 
-            "error":
-                str(error)
-
-        }), 500
-
-
-# ============================================================
-# SERVER
-# ============================================================
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            8000
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
