@@ -36,81 +36,129 @@ CODE_TO_STATE = {
 
 
 def get_lever_jobs(site):
+    """Fetch and normalize public postings from one Lever board."""
     url = f"{LEVER_API}/{site}"
 
     response = requests.get(
         url,
         params={"mode": "json"},
         timeout=25,
-        headers={"User-Agent": "PR-Intelligence-Agent/1.0"}
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "PR-Intelligence-Agent/1.0",
+        },
     )
-
     response.raise_for_status()
-    data = response.json()
 
+    data = response.json()
     if not isinstance(data, list):
         return []
 
-    return [
-        normalize_lever_job(job, site)
-        for job in data
-        if isinstance(job, dict)
-    ]
+    results = []
+    for job in data:
+        if not isinstance(job, dict):
+            continue
+
+        normalized = normalize_lever_job(job, site)
+        if normalized:
+            results.append(normalized)
+
+    return results
+
+
+def detect_location(raw_location):
+    raw = str(raw_location or "").strip()
+    lower = raw.lower()
+
+    if not raw:
+        return {
+            "country": None,
+            "municipality": "Location not specified",
+            "raw": "",
+            "region": None,
+        }
+
+    if "puerto rico" in lower:
+        return {
+            "country": "PR",
+            "municipality": raw,
+            "raw": raw,
+            "region": "Puerto Rico",
+        }
+
+    # Recognize state names first.
+    for state_name, code in STATE_CODES.items():
+        if state_name in lower:
+            municipality = re.sub(
+                r",?\s*" + re.escape(state_name) + r"\b",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip(" ,")
+
+            return {
+                "country": "US",
+                "municipality": municipality or raw,
+                "raw": raw,
+                "region": code,
+            }
+
+    # Recognize a state abbreviation as a separate token.
+    for code in CODE_TO_STATE:
+        if re.search(
+            r"(?:,|\s)\s*" + re.escape(code) + r"\s*$",
+            raw.upper(),
+        ):
+            municipality = re.sub(
+                r",?\s*" + re.escape(code) + r"\s*$",
+                "",
+                raw,
+                flags=re.IGNORECASE,
+            ).strip(" ,")
+
+            return {
+                "country": "US",
+                "municipality": municipality or raw,
+                "raw": raw,
+                "region": code,
+            }
+
+    if any(term in lower for term in (
+        "united states",
+        "united states of america",
+        "remote - us",
+        "remote, us",
+        "remote (us)",
+        "usa",
+    )):
+        return {
+            "country": "US",
+            "municipality": raw,
+            "raw": raw,
+            "region": None,
+        }
+
+    # Do not assume that an unrecognized location is in the US.
+    return {
+        "country": None,
+        "municipality": raw,
+        "raw": raw,
+        "region": None,
+    }
 
 
 def normalize_lever_job(job, site):
     categories = job.get("categories") or {}
 
+    all_locations = categories.get("allLocations") or []
     raw_location = (
         categories.get("location")
-        or ", ".join(categories.get("allLocations") or [])
+        or ", ".join(str(item) for item in all_locations)
         or "Location not specified"
     )
 
-    location_text = str(raw_location).strip()
-    lower_location = location_text.lower()
-
-    country = None
-    region = None
-    municipality = location_text
-
-    if "puerto rico" in lower_location:
-        country = "PR"
-        region = "Puerto Rico"
-
-    else:
-        for state_name, code in STATE_CODES.items():
-            if (
-                state_name in lower_location
-                or re.search(
-                    r"\b" + re.escape(code) + r"\b",
-                    location_text.upper()
-                )
-            ):
-                country = "US"
-                region = code
-
-                municipality = re.sub(
-                    r",?\s*" + re.escape(state_name) + r"\b",
-                    "",
-                    municipality,
-                    flags=re.IGNORECASE
-                ).strip(" ,")
-
-                municipality = re.sub(
-                    r",?\s*" + re.escape(code) + r"\b",
-                    "",
-                    municipality,
-                    flags=re.IGNORECASE
-                ).strip(" ,")
-
-                break
-
-        if any(x in lower_location for x in [
-            "united states", "usa", "remote - us",
-            "remote, us", "remote (us)"
-        ]):
-            country = "US"
+    location = detect_location(raw_location)
+    lower_location = str(raw_location).lower()
 
     if "remote" in lower_location:
         work_mode = "Remote"
@@ -120,19 +168,20 @@ def normalize_lever_job(job, site):
         work_mode = "On-site"
 
     commitment = str(categories.get("commitment") or "")
-    if "full" in commitment.lower():
+    commitment_lower = commitment.lower()
+
+    if "full" in commitment_lower:
         employment_type = "Full-time"
-    elif "part" in commitment.lower():
+    elif "part" in commitment_lower:
         employment_type = "Part-time"
-    elif "contract" in commitment.lower():
+    elif "contract" in commitment_lower or "temporary" in commitment_lower:
         employment_type = "Contract"
-    elif "intern" in commitment.lower():
+    elif "intern" in commitment_lower:
         employment_type = "Internship"
     else:
         employment_type = commitment or "Unknown"
 
     salary_data = job.get("salaryRange") or {}
-
     salary_min = salary_data.get("min")
     salary_max = salary_data.get("max")
     salary_currency = salary_data.get("currency") or "USD"
@@ -141,14 +190,19 @@ def normalize_lever_job(job, site):
     created_at = job.get("createdAt")
     posted_date = None
 
-    if created_at:
+    if created_at is not None:
         try:
+            timestamp = float(created_at)
+            # Lever timestamps are generally milliseconds.
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+
             posted_date = datetime.fromtimestamp(
-                float(created_at) / 1000,
-                tz=timezone.utc
+                timestamp,
+                tz=timezone.utc,
             ).date().isoformat()
-        except (ValueError, TypeError, OverflowError):
-            pass
+        except (ValueError, TypeError, OverflowError, OSError):
+            posted_date = None
 
     title = job.get("text") or "Untitled position"
     description = job.get("descriptionPlain") or ""
@@ -157,23 +211,20 @@ def normalize_lever_job(job, site):
         description = re.sub(
             r"<[^>]+>",
             " ",
-            str(job["description"])
+            str(job["description"]),
         )
+        description = re.sub(r"\s+", " ", description).strip()
 
     hosted_url = job.get("hostedUrl")
     apply_url = job.get("applyUrl") or hosted_url
+    job_id = job.get("id") or title
 
     return {
         "company": site,
         "title": title,
-        "job_id": f"lever-{site}-{job.get('id', title)}",
+        "job_id": f"lever-{site}-{job_id}",
         "description": description,
-        "location": {
-            "country": country,
-            "municipality": municipality or location_text,
-            "raw": location_text,
-            "region": region,
-        },
+        "location": location,
         "salary": {
             "min": salary_min,
             "max": salary_max,
