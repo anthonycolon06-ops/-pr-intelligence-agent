@@ -1,12 +1,20 @@
+
 GREENHOUSE_BOARDS = [
     "livecareer",
 ]
 
 LEVER_BOARDS = [
-    # Ejemplos:
-    # "lever",
-    # "stripe",
-    # "notion",
+    "fliff",
+    "handoff",
+    "distro",
+    "rightsideup",
+    "gopuff",
+    "txse",
+    "spreetail",
+    "shieldai",
+    "goodleap",
+    "entrata",
+    "sandboxvr",
 ]
 
 SOURCES = {
