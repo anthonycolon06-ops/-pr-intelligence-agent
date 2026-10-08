@@ -4,7 +4,6 @@ GREENHOUSE_BOARDS = [
 ]
 
 LEVER_BOARDS = [
-    "fliff",
     "handoff",
     "distro",
     "rightsideup",
@@ -17,7 +16,19 @@ LEVER_BOARDS = [
     "sandboxvr",
 ]
 
+# Identificadores de bolsas públicas para comenzar la integración.
+# Se pueden ampliar a medida que validemos nuevas empresas.
+ASHBY_BOARDS = [
+    "Ashby",
+]
+
+SMARTRECRUITERS_BOARDS = [
+    "smartrecruiters",
+]
+
 SOURCES = {
     "greenhouse": GREENHOUSE_BOARDS,
     "lever": LEVER_BOARDS,
+    "ashby": ASHBY_BOARDS,
+    "smartrecruiters": SMARTRECRUITERS_BOARDS,
 }
