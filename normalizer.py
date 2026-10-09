@@ -1,3 +1,4 @@
+
 import re
 import html
 from datetime import datetime, timezone
@@ -8,56 +9,25 @@ from datetime import datetime, timezone
 # ============================================================
 
 US_STATES = {
-    "alabama": "AL",
-    "alaska": "AK",
-    "arizona": "AZ",
-    "arkansas": "AR",
-    "california": "CA",
-    "colorado": "CO",
-    "connecticut": "CT",
-    "delaware": "DE",
-    "florida": "FL",
-    "georgia": "GA",
-    "hawaii": "HI",
-    "idaho": "ID",
-    "illinois": "IL",
-    "indiana": "IN",
-    "iowa": "IA",
-    "kansas": "KS",
-    "kentucky": "KY",
-    "louisiana": "LA",
-    "maine": "ME",
-    "maryland": "MD",
-    "massachusetts": "MA",
-    "michigan": "MI",
-    "minnesota": "MN",
-    "mississippi": "MS",
-    "missouri": "MO",
-    "montana": "MT",
-    "nebraska": "NE",
-    "nevada": "NV",
-    "new hampshire": "NH",
-    "new jersey": "NJ",
-    "new mexico": "NM",
-    "new york": "NY",
-    "north carolina": "NC",
-    "north dakota": "ND",
-    "ohio": "OH",
-    "oklahoma": "OK",
-    "oregon": "OR",
-    "pennsylvania": "PA",
-    "rhode island": "RI",
-    "south carolina": "SC",
-    "south dakota": "SD",
-    "tennessee": "TN",
-    "texas": "TX",
-    "utah": "UT",
-    "vermont": "VT",
-    "virginia": "VA",
-    "washington": "WA",
-    "west virginia": "WV",
-    "wisconsin": "WI",
-    "wyoming": "WY",
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ",
+    "arkansas": "AR", "california": "CA", "colorado": "CO",
+    "connecticut": "CT", "delaware": "DE", "florida": "FL",
+    "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE",
+    "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA",
+    "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX",
+    "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
     "district of columbia": "DC",
 }
 
@@ -137,9 +107,8 @@ def normalize_space(value):
 
 def extract_location(job):
     """
-    Identifica ubicaciones de Puerto Rico, Estados Unidos
-    y otros países. Nunca asume que una ubicación desconocida
-    pertenece a Estados Unidos.
+    Normaliza la ubicación sin asumir que una ubicación
+    desconocida pertenece a Estados Unidos.
     """
 
     location = job.get("location")
@@ -148,9 +117,7 @@ def extract_location(job):
 
     if isinstance(location, dict):
         raw = location.get("name") or location.get("raw") or ""
-        country_hint = str(
-            location.get("country") or ""
-        ).strip()
+        country_hint = str(location.get("country") or "").strip()
 
     elif isinstance(location, str):
         raw = location
@@ -162,8 +129,7 @@ def extract_location(job):
             names = [
                 str(office["name"])
                 for office in offices
-                if isinstance(office, dict)
-                and office.get("name")
+                if isinstance(office, dict) and office.get("name")
             ]
 
             if names:
@@ -177,58 +143,40 @@ def extract_location(job):
     region = None
     municipality = raw or None
 
-    # --------------------------------------------------------
-    # PUERTO RICO
-    # --------------------------------------------------------
-
+    # Puerto Rico
     if (
         "puerto rico" in lowered
         or hint in {"pr", "pri", "puerto rico"}
-        or re.search(
-            r",\s*PR$",
-            raw,
-            re.IGNORECASE
-        )
+        or re.search(r",\s*PR$", raw, re.IGNORECASE)
     ):
         country = "PR"
         region = "Puerto Rico"
 
-        match = re.search(
-            r"^(.+?),\s*(?:Puerto Rico|PR)$",
+        match = re.fullmatch(
+            r"(.+?),\s*(?:Puerto Rico|PR)",
             raw,
             re.IGNORECASE,
         )
 
-        municipality = (
-            match.group(1).strip()
-            if match
-            else "Puerto Rico"
-        )
+        if match:
+            municipality = match.group(1).strip()
+        elif lowered in {"puerto rico", "pr"}:
+            municipality = "Puerto Rico"
+        else:
+            # Si la fuente identifica el país como PR y el nombre
+            # de ubicación es una ciudad, conservamos esa ciudad.
+            municipality = raw or "Puerto Rico"
 
     else:
+        state_codes = set(US_STATES.values())
 
-        # ----------------------------------------------------
-        # ESTADOS DE EE. UU.
-        # ----------------------------------------------------
-
-        state_codes = set(
-            US_STATES.values()
-        )
-
-        # Austin, TX
         state_match = re.fullmatch(
             r"(.+?),\s*([A-Z]{2})"
             r"(?:,\s*(?:United States|USA|US))?",
             raw,
         )
 
-        # Austin, Texas
-        for state_name in sorted(
-            US_STATES,
-            key=len,
-            reverse=True
-        ):
-
+        for state_name in sorted(US_STATES, key=len, reverse=True):
             match = re.fullmatch(
                 r"(.+?),\s*"
                 + re.escape(state_name)
@@ -238,30 +186,20 @@ def extract_location(job):
             )
 
             if match:
-
                 country = "US"
                 region = US_STATES[state_name]
                 municipality = match.group(1).strip()
                 break
 
         if country is None and state_match:
-
-            state_code = (
-                state_match.group(2).upper()
-            )
+            state_code = state_match.group(2).upper()
 
             if state_code in state_codes:
-
                 country = "US"
                 region = state_code
-                municipality = (
-                    state_match.group(1).strip()
-                )
+                municipality = state_match.group(1).strip()
 
-        # ----------------------------------------------------
-        # REMOTO EN ESTADOS UNIDOS
-        # ----------------------------------------------------
-
+        # Remote explícitamente limitado a Estados Unidos
         if country is None and re.fullmatch(
             r"(?:United States|USA|U\.S\.A\.?)"
             r"\s*(?:\(\s*Remote\s*\))?",
@@ -272,17 +210,12 @@ def extract_location(job):
             municipality = "United States (Remote)"
 
         if country is None and re.fullmatch(
-            r"(?:US|U\.S\.)\s*"
-            r"\(\s*Remote\s*\)",
+            r"(?:US|U\.S\.)\s*\(\s*Remote\s*\)",
             raw,
             re.IGNORECASE,
         ):
             country = "US"
             municipality = "United States (Remote)"
-
-        # ----------------------------------------------------
-        # PAÍSES INTERNACIONALES
-        # ----------------------------------------------------
 
         countries = {
             "india": "IN",
@@ -314,74 +247,31 @@ def extract_location(job):
         }
 
         country_codes = {
-            "us": "US",
-            "usa": "US",
-            "united states": "US",
-            "in": "IN",
-            "ind": "IN",
-            "pl": "PL",
-            "pol": "PL",
-            "ca": "CA",
-            "can": "CA",
-            "gb": "GB",
-            "gbr": "GB",
-            "au": "AU",
-            "aus": "AU",
-            "de": "DE",
-            "deu": "DE",
-            "fr": "FR",
-            "fra": "FR",
-            "es": "ES",
-            "esp": "ES",
-            "mx": "MX",
-            "mex": "MX",
+            "us": "US", "usa": "US", "united states": "US",
+            "in": "IN", "ind": "IN", "pl": "PL", "pol": "PL",
+            "ca": "CA", "can": "CA", "gb": "GB", "gbr": "GB",
+            "au": "AU", "aus": "AU", "de": "DE", "deu": "DE",
+            "fr": "FR", "fra": "FR", "es": "ES", "esp": "ES",
+            "mx": "MX", "mex": "MX",
         }
 
         if country is None:
-
             if hint in country_codes:
-
                 country = country_codes[hint]
-
             else:
-
-                for country_name in sorted(
-                    countries,
-                    key=len,
-                    reverse=True
-                ):
-
+                for country_name in sorted(countries, key=len, reverse=True):
                     if re.search(
-                        r"\b"
-                        + re.escape(country_name)
-                        + r"\b",
+                        r"\b" + re.escape(country_name) + r"\b",
                         lowered,
                     ):
-
-                        country = countries[
-                            country_name
-                        ]
-
+                        country = countries[country_name]
                         break
 
             if country is not None:
+                parts = [part.strip() for part in raw.split(",") if part.strip()]
 
-                parts = [
-                    part.strip()
-                    for part in raw.split(",")
-                    if part.strip()
-                ]
-
-                if (
-                    parts
-                    and parts[-1].lower()
-                    in countries
-                ):
-
-                    municipality = (
-                        ", ".join(parts[:-1])
-                        or raw
-                    )
+                if parts and parts[-1].lower() in countries:
+                    municipality = ", ".join(parts[:-1]) or raw
 
     return {
         "country": country,
@@ -397,24 +287,9 @@ def extract_location(job):
 
 def extract_eligibility(text):
     """
-    Detecta dónde puede residir el candidato para ser elegible.
-
-    Ejemplo:
-
-    "BOLD can hire full-time residents of the following
-    U.S. States & Territories: Arizona, California, Texas,
-    Puerto Rico..."
-
-    Produce:
-
-    {
-        "countries": ["US"],
-        "states": ["AZ", "CA", "TX"],
-        "territories": ["PR"]
-    }
-
-    Importante:
-    Esto NO cambia la ubicación física del empleo.
+    Detecta restricciones explícitas de elegibilidad geográfica.
+    No confunde el lugar donde se puede contratar con la ubicación
+    física del empleo.
     """
 
     empty = {
@@ -427,15 +302,7 @@ def extract_eligibility(text):
         return empty
 
     normalized = normalize_space(text)
-
     lowered = normalized.lower()
-
-    states_found = []
-    territories_found = []
-
-    # --------------------------------------------------------
-    # Detectar si el texto habla explícitamente de elegibilidad
-    # --------------------------------------------------------
 
     eligibility_markers = [
         "eligible hiring locations",
@@ -449,31 +316,17 @@ def extract_eligibility(text):
         "locations where we can hire",
     ]
 
-    marker_positions = []
+    positions = [
+        lowered.find(marker)
+        for marker in eligibility_markers
+        if lowered.find(marker) >= 0
+    ]
 
-    for marker in eligibility_markers:
-
-        position = lowered.find(marker)
-
-        if position >= 0:
-            marker_positions.append(position)
-
-    # Si no encontramos una sección de elegibilidad,
-    # no intentamos convertir cualquier mención de Texas
-    # en elegibilidad.
-    if not marker_positions:
+    if not positions:
         return empty
 
-    start = min(marker_positions)
+    eligibility_text = normalized[min(positions):]
 
-    # --------------------------------------------------------
-    # Extraer una ventana después del marcador
-    # --------------------------------------------------------
-
-    eligibility_text = normalized[start:]
-
-    # Generalmente la lista termina antes de:
-    # California Residents / Benefits / Individual pay / etc.
     stop_patterns = [
         r"\bCalifornia Residents:",
         r"\bBenefits\b",
@@ -487,110 +340,50 @@ def extract_eligibility(text):
     stop_positions = []
 
     for pattern in stop_patterns:
-
-        match = re.search(
-            pattern,
-            eligibility_text,
-            re.IGNORECASE
-        )
-
+        match = re.search(pattern, eligibility_text, re.IGNORECASE)
         if match:
-            stop_positions.append(
-                match.start()
-            )
+            stop_positions.append(match.start())
 
     if stop_positions:
+        eligibility_text = eligibility_text[:min(stop_positions)]
 
-        eligibility_text = (
-            eligibility_text[
-                :min(stop_positions)
-            ]
-        )
-
-    lowered_eligibility = (
-        eligibility_text.lower()
-    )
-
-    # --------------------------------------------------------
-    # Estados
-    # --------------------------------------------------------
+    lowered_eligibility = eligibility_text.lower()
+    states_found = []
+    territories_found = []
 
     for state_name, state_code in US_STATES.items():
-
         if re.search(
-            r"\b"
-            + re.escape(state_name)
-            + r"\b",
+            r"\b" + re.escape(state_name) + r"\b",
             lowered_eligibility,
         ):
-
-            states_found.append(
-                state_code
-            )
-
-    # --------------------------------------------------------
-    # Códigos estatales explícitos
-    # --------------------------------------------------------
+            states_found.append(state_code)
 
     for state_code in STATE_CODE_TO_NAME:
-
         if re.search(
-            r"(?<![A-Za-z])"
-            + re.escape(state_code)
+            r"(?<![A-Za-z])" + re.escape(state_code)
             + r"(?![A-Za-z])",
             lowered_eligibility,
         ):
-
             code_upper = state_code.upper()
-
             if code_upper not in states_found:
+                states_found.append(code_upper)
 
-                states_found.append(
-                    code_upper
-                )
-
-    # --------------------------------------------------------
-    # Puerto Rico
-    # --------------------------------------------------------
-
-    if re.search(
-        r"\bpuerto rico\b",
-        lowered_eligibility
-    ):
-
-        territories_found.append(
-            "PR"
-        )
-
-    # --------------------------------------------------------
-    # Otros territorios estadounidenses
-    # --------------------------------------------------------
+    if re.search(r"\bpuerto rico\b", lowered_eligibility):
+        territories_found.append("PR")
 
     territory_patterns = {
-        "guam": "GU",
-        "u\.s\. virgin islands": "VI",
-        "us virgin islands": "VI",
-        "virgin islands": "VI",
-        "american samoa": "AS",
-        "northern mariana islands": "MP",
+        r"guam": "GU",
+        r"u\.s\. virgin islands": "VI",
+        r"us virgin islands": "VI",
+        r"virgin islands": "VI",
+        r"american samoa": "AS",
+        r"northern mariana islands": "MP",
     }
 
     for pattern, code in territory_patterns.items():
-
-        if re.search(
-            r"\b" + pattern + r"\b",
-            lowered_eligibility
-        ):
-
+        if re.search(r"\b" + pattern + r"\b", lowered_eligibility):
             if code not in territories_found:
-
-                territories_found.append(
-                    code
-                )
-
-    # --------------------------------------------------------
-    # Determinar país
-    # --------------------------------------------------------
+                territories_found.append(code)
 
     countries_found = []
 
@@ -598,27 +391,16 @@ def extract_eligibility(text):
         states_found
         or territories_found
         or re.search(
-            r"\bu\.?s\.?\b"
-            r"|\bunited states\b"
-            r"|\bu\.?s\.?\s+states\b",
+            r"\bu\.?s\.?\b|\bunited states\b|\bu\.?s\.?\s+states\b",
             lowered_eligibility,
         )
     ):
-
-        countries_found.append(
-            "US"
-        )
+        countries_found.append("US")
 
     return {
-        "countries": sorted(
-            set(countries_found)
-        ),
-        "states": sorted(
-            set(states_found)
-        ),
-        "territories": sorted(
-            set(territories_found)
-        ),
+        "countries": sorted(set(countries_found)),
+        "states": sorted(set(states_found)),
+        "territories": sorted(set(territories_found)),
     }
 
 
@@ -630,32 +412,30 @@ def normalize_salary_period(period):
     if not period:
         return "unknown"
 
-    period = period.lower()
+    period = period.lower().strip()
 
-    if period in {
-        "hour",
-        "hr",
-        "hourly"
-    }:
+    if period in {"hour", "hr", "hourly"}:
         return "hour"
 
-    if period in {
-        "year",
-        "annual",
-        "annually"
-    }:
+    if period in {"year", "annual", "annually", "yearly"}:
         return "year"
 
-    if period in {
-        "month",
-        "monthly"
-    }:
+    if period in {"month", "monthly"}:
         return "month"
 
     return "unknown"
 
 
 def extract_salary(text):
+    """
+    Extrae rangos como:
+      $16 - $20 per hour
+      $80,000 to $95,000
+      USD 50,000 - USD 70,000 annually
+
+    No supone que un salario sea anual u horario cuando el texto
+    no especifica el período.
+    """
 
     empty = {
         "currency": "USD",
@@ -669,103 +449,91 @@ def extract_salary(text):
         return empty
 
     normalized = (
-        text.replace("–", "-")
+        str(text)
+        .replace("–", "-")
         .replace("—", "-")
         .replace("−", "-")
     )
 
-    number = (
-        r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    number = r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+
+    period = (
+        r"(?:per\s+)?"
+        r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)"
+        r"(?:\s+rate|\s+salary)?"
     )
 
-    period_pattern = (
-        r"(hour|hr|hourly|year|annual|annually|month|monthly)?"
-    )
-
-    patterns = [
-
+    # Rango: permite guion o "to", con o sin símbolo monetario
+    # repetido en el segundo importe.
+    range_patterns = [
         re.compile(
             r"\$\s*" + number
-            + r"\s*-\s*\$?\s*" + number
-            + r"\s*" + period_pattern,
+            + r"\s*(?:-|to|through)\s*\$?\s*" + number
+            + r"\s*(?:per\s+)?"
+            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
             re.IGNORECASE,
         ),
-
         re.compile(
             r"\bUSD\s*" + number
-            + r"\s*-\s*USD?\s*" + number
-            + r"\s*" + period_pattern,
+            + r"\s*(?:-|to|through)\s*(?:USD\s*)?\$?\s*" + number
+            + r"\s*(?:per\s+)?"
+            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
             re.IGNORECASE,
         ),
-
     ]
 
-    for pattern in patterns:
+    for pattern in range_patterns:
+        match = pattern.search(normalized)
 
-        match = pattern.search(
-            normalized
-        )
+        if not match:
+            continue
 
-        if match:
+        minimum = float(match.group(1).replace(",", ""))
+        maximum = float(match.group(2).replace(",", ""))
 
-            minimum = float(
-                match.group(1)
-                .replace(",", "")
-            )
+        # Evita aceptar un rango invertido como si fuera correcto.
+        if minimum > maximum:
+            minimum, maximum = maximum, minimum
 
-            maximum = float(
-                match.group(2)
-                .replace(",", "")
-            )
+        return {
+            "currency": "USD",
+            "max": maximum,
+            "min": minimum,
+            "period": normalize_salary_period(match.group(3)),
+            "published": True,
+        }
 
-            return {
-                "currency": "USD",
-                "max": maximum,
-                "min": minimum,
-                "period": normalize_salary_period(
-                    match.group(3)
-                ),
-                "published": True,
-            }
-
+    # Importe único: se usa solamente si no se encontró un rango.
     single_patterns = [
-
         re.compile(
             r"\$\s*" + number
-            + r"\s*" + period_pattern,
+            + r"\s*(?:per\s+)?"
+            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
             re.IGNORECASE,
         ),
-
         re.compile(
             r"\bUSD\s*" + number
-            + r"\s*" + period_pattern,
+            + r"\s*(?:per\s+)?"
+            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
             re.IGNORECASE,
         ),
-
     ]
 
     for pattern in single_patterns:
+        match = pattern.search(normalized)
 
-        match = pattern.search(
-            normalized
-        )
+        if not match:
+            continue
 
-        if match:
+        amount = float(match.group(1).replace(",", ""))
 
-            amount = float(
-                match.group(1)
-                .replace(",", "")
-            )
-
-            return {
-                "currency": "USD",
-                "max": amount,
-                "min": amount,
-                "period": normalize_salary_period(
-                    match.group(2)
-                ),
-                "published": True,
-            }
+        return {
+            "currency": "USD",
+            "max": amount,
+            "min": amount,
+            "period": normalize_salary_period(match.group(2)),
+            "published": True,
+        }
 
     return empty
 
@@ -775,44 +543,31 @@ def extract_salary(text):
 # ============================================================
 
 def extract_employment_type(text):
-
     if not text:
         return "Unknown"
 
     lowered = text.lower()
 
-    if re.search(
-        r"\bfull[- ]time\b",
-        lowered
-    ):
+    if re.search(r"\bfull[- ]time\b", lowered):
         return "Full-time"
 
-    if re.search(
-        r"\bpart[- ]time\b",
-        lowered
-    ):
+    if re.search(r"\bpart[- ]time\b", lowered):
         return "Part-time"
 
     if re.search(
-        r"\binternship\b"
-        r"|\bintern position\b"
-        r"|\bintern role\b",
+        r"\binternship\b|\bintern position\b|\bintern role\b",
         lowered,
     ):
         return "Internship"
 
     if re.search(
-        r"\btemporary position\b"
-        r"|\btemporary role\b"
-        r"|\btemporary job\b",
+        r"\btemporary position\b|\btemporary role\b|\btemporary job\b",
         lowered,
     ):
         return "Temporary"
 
     if re.search(
-        r"\bcontract position\b"
-        r"|\bcontract role\b"
-        r"|\bcontractor position\b",
+        r"\bcontract position\b|\bcontract role\b|\bcontractor position\b",
         lowered,
     ):
         return "Contract"
@@ -825,284 +580,129 @@ def extract_employment_type(text):
 # ============================================================
 
 def extract_industry(text, job=None):
-
-    title = str(
-        (job or {}).get("title") or ""
-    ).lower()
-
-    department = str(
-        (job or {}).get("department") or ""
-    ).lower()
-
-    content = (
-        text or ""
-    ).lower()
+    title = str((job or {}).get("title") or "").lower()
+    department = str((job or {}).get("department") or "").lower()
+    content = (text or "").lower()
 
     technology_terms = [
-        "software",
-        "developer",
-        "engineer",
-        "engineering",
-        "artificial intelligence",
-        "machine learning",
-        "data scientist",
-        "data engineer",
-        "systems analyst",
-        "systems administrator",
-        "information technology",
-        "technology",
-        "technical",
-        "devops",
-        "cloud",
-        "cybersecurity",
-        "software architect",
+        "software", "developer", "engineer", "engineering",
+        "artificial intelligence", "machine learning",
+        "data scientist", "data engineer", "systems analyst",
+        "systems administrator", "information technology",
+        "technology", "technical", "devops", "cloud",
+        "cybersecurity", "software architect",
     ]
 
-    if any(
-        term in title
-        for term in technology_terms
-    ):
+    if any(term in title for term in technology_terms):
         return "Technology"
 
     if any(
         term in department
-        for term in [
-            "technology",
-            "engineering",
-            "software",
-            "data"
-        ]
+        for term in ["technology", "engineering", "software", "data"]
     ):
         return "Technology"
 
     design_terms = [
-        "visual designer",
-        "graphic designer",
-        "ui designer",
-        "ux designer",
-        "ux/ui designer",
-        "product designer",
-        "brand designer",
-        "digital designer",
-        "marketing designer",
-        "content designer",
-        "creative designer",
-        "web designer",
+        "visual designer", "graphic designer", "ui designer",
+        "ux designer", "ux/ui designer", "product designer",
+        "brand designer", "digital designer", "marketing designer",
+        "content designer", "creative designer", "web designer",
     ]
 
-    if any(
-        term in title
-        for term in design_terms
-    ):
+    if any(term in title for term in design_terms):
         return "Marketing & Design"
 
     if any(
         term in department
         for term in [
-            "marketing & design",
-            "marketing and design",
-            "creative",
-            "brand",
-            "visual design",
-            "graphic design",
-            "ux/ui",
+            "marketing & design", "marketing and design", "creative",
+            "brand", "visual design", "graphic design", "ux/ui",
         ]
     ):
         return "Marketing & Design"
 
     categories = [
-
         ("Aviation", [
-            "aviation",
-            "aircraft",
-            "airline",
-            "airport",
-            "aerospace",
-            "flight operations",
-            "air cargo",
+            "aviation", "aircraft", "airline", "airport", "aerospace",
+            "flight operations", "air cargo",
         ]),
-
         ("Manufacturing", [
-            "manufacturing",
-            "production",
-            "assembly",
-            "fabrication",
-            "machine operator",
-            "production operator",
+            "manufacturing", "production", "assembly", "fabrication",
+            "machine operator", "production operator",
         ]),
-
         ("Logistics", [
-            "logistics",
-            "warehouse",
-            "supply chain",
-            "inventory",
-            "shipping",
-            "receiving",
-            "distribution",
+            "logistics", "warehouse", "supply chain", "inventory",
+            "shipping", "receiving", "distribution",
         ]),
-
         ("Healthcare", [
-            "nurse",
-            "nursing",
-            "medical assistant",
-            "medical technician",
-            "healthcare",
-            "health care",
-            "clinical",
-            "pharmacy",
-            "pharmacist",
-            "therapist",
-            "physician",
-            "doctor",
-            "radiology",
-            "patient care",
+            "nurse", "nursing", "medical assistant", "medical technician",
+            "healthcare", "health care", "clinical", "pharmacy",
+            "pharmacist", "therapist", "physician", "doctor",
+            "radiology", "patient care",
         ]),
-
         ("Construction", [
-            "construction",
-            "carpenter",
-            "electrician",
-            "plumber",
-            "welder",
-            "concrete",
-            "mason",
-            "roofer",
+            "construction", "carpenter", "electrician", "plumber",
+            "welder", "concrete", "mason", "roofer",
         ]),
-
         ("Maintenance", [
-            "maintenance",
-            "mechanic",
-            "industrial technician",
+            "maintenance", "mechanic", "industrial technician",
             "equipment technician",
         ]),
-
         ("Transportation", [
-            "driver",
-            "delivery driver",
-            "transportation",
-            "truck driver",
-            "courier",
-            "dispatcher",
+            "driver", "delivery driver", "transportation",
+            "truck driver", "courier", "dispatcher",
         ]),
-
         ("Retail", [
-            "retail",
-            "store associate",
-            "sales associate",
-            "cashier",
-            "store manager",
+            "retail", "store associate", "sales associate",
+            "cashier", "store manager",
         ]),
-
         ("Restaurants", [
-            "restaurant",
-            "server",
-            "waiter",
-            "waitress",
-            "cook",
-            "chef",
-            "food service",
-            "line cook",
-            "dishwasher",
+            "restaurant", "server", "waiter", "waitress", "cook",
+            "chef", "food service", "line cook", "dishwasher",
         ]),
-
         ("Hospitality", [
-            "hotel",
-            "resort",
-            "hospitality",
-            "front desk",
-            "guest services",
-            "housekeeping",
+            "hotel", "resort", "hospitality", "front desk",
+            "guest services", "housekeeping",
         ]),
-
-        ("Security", [
-            "security",
-            "security officer",
-            "security guard",
-        ]),
-
+        ("Security", ["security", "security officer", "security guard"]),
         ("Sales", [
-            "sales",
-            "account executive",
-            "sales representative",
+            "sales", "account executive", "sales representative",
             "business development",
         ]),
-
         ("Customer Service", [
-            "customer service",
-            "customer support",
-            "call center",
+            "customer service", "customer support", "call center",
             "contact center",
         ]),
-
         ("Finance", [
-            "accountant",
-            "accounting",
-            "finance",
-            "financial analyst",
-            "financial",
-            "bookkeeper",
-            "banking",
+            "accountant", "accounting", "finance", "financial analyst",
+            "financial", "bookkeeper", "banking",
         ]),
-
         ("Administrative", [
-            "administrative",
-            "administration",
-            "office assistant",
-            "receptionist",
-            "executive assistant",
-            "office coordinator",
+            "administrative", "administration", "office assistant",
+            "receptionist", "executive assistant", "office coordinator",
         ]),
-
         ("Education", [
-            "teacher",
-            "professor",
-            "instructor",
-            "education",
-            "school counselor",
-            "academic",
+            "teacher", "professor", "instructor", "education",
+            "school counselor", "academic",
         ]),
-
         ("Government", [
-            "government",
-            "federal",
-            "municipal",
-            "public sector",
+            "government", "federal", "municipal", "public sector",
         ]),
     ]
 
     for category, terms in categories:
-
-        if any(
-            term in title
-            for term in terms
-        ):
+        if any(term in title for term in terms):
             return category
 
     strong_technology_content = [
-        "software engineering",
-        "software development",
-        "javascript",
-        "typescript",
-        "python",
-        "sql",
-        "llm",
-        "large language model",
-        "machine learning",
-        "artificial intelligence",
-        "rest api",
-        "soap api",
-        "ci/cd",
-        "database modeling",
-        "data modeling",
-        "cloud infrastructure",
-        "devops",
+        "software engineering", "software development", "javascript",
+        "typescript", "python", "sql", "llm", "large language model",
+        "machine learning", "artificial intelligence", "rest api",
+        "soap api", "ci/cd", "database modeling", "data modeling",
+        "cloud infrastructure", "devops",
     ]
 
-    score = sum(
-        1
-        for term in strong_technology_content
-        if term in content
-    )
+    score = sum(1 for term in strong_technology_content if term in content)
 
     if score >= 2:
         return "Technology"
@@ -1115,39 +715,37 @@ def extract_industry(text, job=None):
 # ============================================================
 
 def extract_work_mode(text):
+    """
+    Devuelve Unknown cuando la descripción no permite determinar
+    la modalidad. No se presume que sea presencial por defecto.
+    """
 
     if not text:
         return "Unknown"
 
     lowered = text.lower()
 
+    # Primero se buscan modalidades explícitas.
     if (
         "li-hybrid" in lowered
-        or re.search(
-            r"\bhybrid\b",
-            lowered
-        )
+        or re.search(r"\bhybrid\b", lowered)
     ):
         return "Hybrid"
 
     if (
         "li-remote" in lowered
-        or re.search(
-            r"\bremote\b",
-            lowered
-        )
+        or re.search(r"\bremote\b", lowered)
         or "work from home" in lowered
+        or "work remotely" in lowered
     ):
         return "Remote"
 
     if (
         "li-onsite" in lowered
-        or re.search(
-            r"\bon[- ]site\b",
-            lowered
-        )
-        or "onsite" in lowered
+        or re.search(r"\bon[- ]site\b", lowered)
+        or re.search(r"\bonsite\b", lowered)
         or "on site" in lowered
+        or "in person at our office" in lowered
     ):
         return "On-site"
 
@@ -1159,7 +757,6 @@ def extract_work_mode(text):
 # ============================================================
 
 def extract_education(text):
-
     if not text:
         return []
 
@@ -1167,60 +764,34 @@ def extract_education(text):
     education = []
 
     if re.search(
-        r"\bhigh school\b"
-        r"|\bhigh-school\b"
-        r"|\bsecondary school\b",
+        r"\bhigh school\b|\bhigh-school\b|\bsecondary school\b",
         lowered,
     ):
-        education.append(
-            "High school"
-        )
+        education.append("High school")
 
     if re.search(
-        r"\bassociate'?s?\b"
-        r"|\bassociates degree\b",
+        r"\bassociate'?s?\b|\bassociates degree\b",
         lowered,
     ):
-        education.append(
-            "Associate degree"
-        )
+        education.append("Associate degree")
 
     if re.search(
-        r"\bundergraduate degree\b"
-        r"|\bbachelor'?s?\b"
-        r"|\bbachelor degree\b",
+        r"\bundergraduate degree\b|\bbachelor'?s?\b|\bbachelor degree\b",
         lowered,
     ):
-        education.append(
-            "Bachelor's degree"
-        )
+        education.append("Bachelor's degree")
 
     if re.search(
-        r"\bmaster'?s?\b"
-        r"|\bmaster degree\b",
+        r"\bmaster'?s?\b|\bmaster degree\b",
         lowered,
     ):
-        education.append(
-            "Master's degree"
-        )
+        education.append("Master's degree")
 
-    if re.search(
-        r"\bph\.?d\.?\b"
-        r"|\bdoctorate\b",
-        lowered
-    ):
-        education.append(
-            "Doctorate"
-        )
+    if re.search(r"\bph\.?d\.?\b|\bdoctorate\b", lowered):
+        education.append("Doctorate")
 
-    if re.search(
-        r"\btechnical degree\b"
-        r"|\btechnical diploma\b",
-        lowered,
-    ):
-        education.append(
-            "Technical degree"
-        )
+    if re.search(r"\btechnical degree\b|\btechnical diploma\b", lowered):
+        education.append("Technical degree")
 
     return education
 
@@ -1230,7 +801,6 @@ def extract_education(text):
 # ============================================================
 
 def extract_experience(text):
-
     if not text:
         return None, []
 
@@ -1243,71 +813,28 @@ def extract_experience(text):
     matches = []
 
     patterns = [
-
+        re.compile(r"\b(\d+)\s*-\s*(\d+)\s+years?\b", re.IGNORECASE),
+        re.compile(r"\b(\d+)\s*\+\s*years?\b", re.IGNORECASE),
         re.compile(
-            r"\b(\d+)\s*-\s*(\d+)\s+years?\b",
+            r"\b(?:minimum of|at least)\s+(\d+)\s+years?\b",
             re.IGNORECASE,
         ),
-
-        re.compile(
-            r"\b(\d+)\s*\+\s*years?\b",
-            re.IGNORECASE,
-        ),
-
-        re.compile(
-            r"\b(?:minimum of|at least)"
-            r"\s+(\d+)\s+years?\b",
-            re.IGNORECASE,
-        ),
-
     ]
 
-    for index, pattern in enumerate(
-        patterns
-    ):
-
-        for match in pattern.finditer(
-            normalized
-        ):
-
+    for index, pattern in enumerate(patterns):
+        for match in pattern.finditer(normalized):
             if index == 0:
-
-                value = (
-                    f"{match.group(1)}"
-                    f"-{match.group(2)} years"
-                )
-
+                value = f"{match.group(1)}-{match.group(2)} years"
             else:
+                value = f"{match.group(1)}+ years"
 
-                value = (
-                    f"{match.group(1)}+ years"
-                )
-
-            start = max(
-                0,
-                match.start() - 80
-            )
-
-            end = min(
-                len(normalized),
-                match.end() + 120
-            )
+            start = max(0, match.start() - 80)
+            end = min(len(normalized), match.end() + 120)
 
             matches.append({
-
-                "start":
-                    match.start(),
-
-                "value":
-                    value,
-
-                "context":
-                    normalize_space(
-                        normalized[
-                            start:end
-                        ]
-                    ),
-
+                "start": match.start(),
+                "value": value,
+                "context": normalize_space(normalized[start:end]),
             })
 
     if not matches:
@@ -1316,47 +843,26 @@ def extract_experience(text):
     unique = []
     seen = set()
 
-    for item in sorted(
-        matches,
-        key=lambda x: x["start"]
-    ):
-
-        key = (
-            item["start"],
-            item["value"]
-        )
+    for item in sorted(matches, key=lambda x: x["start"]):
+        key = (item["start"], item["value"])
 
         if key not in seen:
-
-            unique.append(
-                item
-            )
-
+            unique.append(item)
             seen.add(key)
 
     primary = unique[0]["value"]
-
     details = []
     seen_values = set()
 
     for item in unique:
-
         if item["value"] in seen_values:
             continue
 
         details.append({
-
-            "experience":
-                item["value"],
-
-            "context":
-                item["context"],
-
+            "experience": item["value"],
+            "context": item["context"],
         })
-
-        seen_values.add(
-            item["value"]
-        )
+        seen_values.add(item["value"])
 
     return primary, details
 
@@ -1366,7 +872,6 @@ def extract_experience(text):
 # ============================================================
 
 def extract_licenses(text):
-
     if not text:
         return []
 
@@ -1374,46 +879,21 @@ def extract_licenses(text):
     licenses = []
 
     patterns = [
-
-        ("A&P", [
-            "a&p",
-            "airframe and powerplant",
-        ]),
-
+        ("A&P", ["a&p", "airframe and powerplant"]),
         ("Driver's license", [
-            "driver's license",
-            "drivers license",
-            "valid driver's license",
-            "valid drivers license",
+            "driver's license", "drivers license",
+            "valid driver's license", "valid drivers license",
         ]),
-
-        ("FAA certification", [
-            "faa certification",
-            "faa license",
-        ]),
-
-        ("CPA", [
-            "cpa license",
-            "certified public accountant",
-        ]),
-
+        ("FAA certification", ["faa certification", "faa license"]),
+        ("CPA", ["cpa license", "certified public accountant"]),
         ("PMP", [
-            "pmp certification",
-            "project management professional",
+            "pmp certification", "project management professional",
         ]),
-
     ]
 
     for name, keywords in patterns:
-
-        if any(
-            keyword in lowered
-            for keyword in keywords
-        ):
-
-            licenses.append(
-                name
-            )
+        if any(keyword in lowered for keyword in keywords):
+            licenses.append(name)
 
     return licenses
 
@@ -1423,25 +903,13 @@ def extract_licenses(text):
 # ============================================================
 
 def extract_requirements(text):
-
-    experience, experience_details = (
-        extract_experience(text)
-    )
+    experience, experience_details = extract_experience(text)
 
     return {
-
-        "education":
-            extract_education(text),
-
-        "experience":
-            experience,
-
-        "experience_details":
-            experience_details,
-
-        "licenses":
-            extract_licenses(text),
-
+        "education": extract_education(text),
+        "experience": experience,
+        "experience_details": experience_details,
+        "licenses": extract_licenses(text),
     }
 
 
@@ -1450,22 +918,14 @@ def extract_requirements(text):
 # ============================================================
 
 def parse_date_value(value):
-
     if value is None:
         return None
 
-    if isinstance(
-        value,
-        datetime
-    ):
-
+    if isinstance(value, datetime):
         dt = value
 
         if dt.tzinfo is None:
-
-            dt = dt.replace(
-                tzinfo=timezone.utc
-            )
+            dt = dt.replace(tzinfo=timezone.utc)
 
         return dt.isoformat()
 
@@ -1475,19 +935,10 @@ def parse_date_value(value):
         return None
 
     try:
-
-        dt = datetime.fromisoformat(
-            value.replace(
-                "Z",
-                "+00:00"
-            )
-        )
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
 
         if dt.tzinfo is None:
-
-            dt = dt.replace(
-                tzinfo=timezone.utc
-            )
+            dt = dt.replace(tzinfo=timezone.utc)
 
         return dt.isoformat()
 
@@ -1495,25 +946,12 @@ def parse_date_value(value):
         pass
 
     for date_format in [
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%m/%d/%Y",
-        "%m-%d-%Y",
+        "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y",
     ]:
-
         try:
-
-            dt = datetime.strptime(
-                value,
-                date_format
-            )
-
-            dt = dt.replace(
-                tzinfo=timezone.utc
-            )
-
+            dt = datetime.strptime(value, date_format)
+            dt = dt.replace(tzinfo=timezone.utc)
             return dt.isoformat()
-
         except ValueError:
             continue
 
@@ -1521,9 +959,7 @@ def parse_date_value(value):
 
 
 def extract_dates(job):
-
     posted_candidates = [
-
         "first_published_at",
         "first_published",
         "published_at",
@@ -1534,45 +970,32 @@ def extract_dates(job):
         "createdAt",
         "opened_at",
         "opening_date",
-
     ]
 
     updated_candidates = [
-
         "updated_at",
         "updatedAt",
         "last_updated_at",
         "last_updated",
         "modified_at",
         "modifiedAt",
-
     ]
 
     posted_date = None
     updated_date = None
 
     for field in posted_candidates:
-
         value = job.get(field)
 
         if value:
-
-            posted_date = parse_date_value(
-                value
-            )
-
+            posted_date = parse_date_value(value)
             break
 
     for field in updated_candidates:
-
         value = job.get(field)
 
         if value:
-
-            updated_date = parse_date_value(
-                value
-            )
-
+            updated_date = parse_date_value(value)
             break
 
     return posted_date, updated_date
@@ -1582,40 +1005,22 @@ def extract_dates(job):
 # SOURCE
 # ============================================================
 
-def build_source(
-    job,
-    company,
-    board_token
-):
-
+def build_source(job, company, board_token):
     job_id = job.get("id")
 
-    absolute_url = (
-        job.get("absolute_url")
-        or job.get("url")
-    )
+    absolute_url = job.get("absolute_url") or job.get("url")
 
     if not absolute_url and job_id:
-
         absolute_url = (
             f"https://boards.greenhouse.io/"
             f"{board_token}/jobs/{job_id}"
         )
 
     return {
-
-        "name":
-            "Greenhouse",
-
-        "type":
-            "job_board_api",
-
-        "url":
-            absolute_url,
-
-        "application_url":
-            absolute_url,
-
+        "name": "Greenhouse",
+        "type": "job_board_api",
+        "url": absolute_url,
+        "application_url": absolute_url,
     }
 
 
@@ -1623,108 +1028,41 @@ def build_source(
 # NORMALIZER
 # ============================================================
 
-def normalize_greenhouse_job(
-    job,
-    company,
-    board_token
-):
-
-    content = get_job_content(
-        job
-    )
-
-    location = extract_location(
-        job
-    )
-
-    eligibility = extract_eligibility(
-        content
-    )
-
-    salary = extract_salary(
-        content
-    )
-
-    requirements = extract_requirements(
-        content
-    )
-
-    posted_date, updated_date = (
-        extract_dates(job)
-    )
+def normalize_greenhouse_job(job, company, board_token):
+    content = get_job_content(job)
+    location = extract_location(job)
+    eligibility = extract_eligibility(content)
+    salary = extract_salary(content)
+    requirements = extract_requirements(content)
+    posted_date, updated_date = extract_dates(job)
 
     job_id = job.get("id")
     title = job.get("title") or ""
 
     return {
-
-        "company":
-            company,
-
-        "title":
-            title,
-
-        "job_id":
-            (
-                f"greenhouse-{board_token}-{job_id}"
-                if job_id
-                else f"greenhouse-{board_token}"
-            ),
-
-        "description":
-            content,
-
-        "location":
-            location,
-
-        "eligibility":
-            eligibility,
-
-        "salary":
-            salary,
-
-        "employment_type":
-            extract_employment_type(
-                content
-            ),
-
-        "industry":
-            extract_industry(
-                content,
-                job
-            ),
-
-        "work_mode":
-            extract_work_mode(
-                content
-            ),
-
-        "requirements":
-            requirements,
-
-        "posted_date":
-            posted_date,
-
-        "updated_date":
-            updated_date,
-
-        "source":
-            build_source(
-                job,
-                company,
-                board_token
-            ),
-
+        "company": company,
+        "title": title,
+        "job_id": (
+            f"greenhouse-{board_token}-{job_id}"
+            if job_id
+            else f"greenhouse-{board_token}"
+        ),
+        "description": content,
+        "location": location,
+        "eligibility": eligibility,
+        "salary": salary,
+        "employment_type": extract_employment_type(content),
+        "industry": extract_industry(content, job),
+        "work_mode": extract_work_mode(content),
+        "requirements": requirements,
+        "posted_date": posted_date,
+        "updated_date": updated_date,
+        "source": build_source(job, company, board_token),
         "verification": {
-
-            "status":
-                "source_verified",
-
-            "checked_at":
-                datetime.now(
-                    timezone.utc
-                ).isoformat(),
-
+            # Significa que la publicación se obtuvo de la fuente;
+            # no confirma que el puesto siga aceptando solicitudes.
+            "status": "source_found",
+            "application_status": "not_confirmed",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
         },
-
     }
