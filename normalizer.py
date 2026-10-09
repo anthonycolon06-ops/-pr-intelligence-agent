@@ -1,4 +1,3 @@
-
 import re
 import html
 from datetime import datetime, timezone
@@ -163,8 +162,6 @@ def extract_location(job):
         elif lowered in {"puerto rico", "pr"}:
             municipality = "Puerto Rico"
         else:
-            # Si la fuente identifica el país como PR y el nombre
-            # de ubicación es una ciudad, conservamos esa ciudad.
             municipality = raw or "Puerto Rico"
 
     else:
@@ -428,12 +425,16 @@ def normalize_salary_period(period):
 
 def extract_salary(text):
     """
-    Extrae rangos como:
+    Extrae rangos salariales y cantidades individuales.
+
+    Ejemplos:
       $16 - $20 per hour
       $80,000 to $95,000
       USD 50,000 - USD 70,000 annually
+      $100k - $150k
+      $1.2m - $1.5m
 
-    No supone que un salario sea anual u horario cuando el texto
+    No supone que un salario sea anual u horario si la fuente
     no especifica el período.
     """
 
@@ -455,29 +456,41 @@ def extract_salary(text):
         .replace("−", "-")
     )
 
-    number = r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"
+    # Permite comas, decimales y sufijos k/m.
+    amount = r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kKmM])?"
 
-    period = (
-        r"(?:per\s+)?"
-        r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)"
+    period_pattern = (
+        r"(?:\s*(?:per|/)\s*)?"
+        r"(hourly|hour|hr|hours|yearly|annual|annually|year|years|"
+        r"monthly|month|months)"
         r"(?:\s+rate|\s+salary)?"
     )
 
-    # Rango: permite guion o "to", con o sin símbolo monetario
-    # repetido en el segundo importe.
+    def parse_amount(number_text, suffix):
+        value = float(number_text.replace(",", ""))
+
+        if suffix:
+            suffix = suffix.lower()
+
+            if suffix == "k":
+                value *= 1000
+            elif suffix == "m":
+                value *= 1000000
+
+        return value
+
+    # Rango con símbolo $, USD opcional y sufijos k/m.
     range_patterns = [
         re.compile(
-            r"\$\s*" + number
-            + r"\s*(?:-|to|through)\s*\$?\s*" + number
-            + r"\s*(?:per\s+)?"
-            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
+            r"\$\s*" + amount
+            + r"\s*(?:-|to|through)\s*\$?\s*" + amount
+            + period_pattern + r"?",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\bUSD\s*" + number
-            + r"\s*(?:-|to|through)\s*(?:USD\s*)?\$?\s*" + number
-            + r"\s*(?:per\s+)?"
-            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
+            r"\bUSD\s*" + amount
+            + r"\s*(?:-|to|through)\s*(?:USD\s*)?\$?\s*" + amount
+            + period_pattern + r"?",
             re.IGNORECASE,
         ),
     ]
@@ -488,10 +501,10 @@ def extract_salary(text):
         if not match:
             continue
 
-        minimum = float(match.group(1).replace(",", ""))
-        maximum = float(match.group(2).replace(",", ""))
+        minimum = parse_amount(match.group(1), match.group(2))
+        maximum = parse_amount(match.group(3), match.group(4))
+        period = normalize_salary_period(match.group(5))
 
-        # Evita aceptar un rango invertido como si fuera correcto.
         if minimum > maximum:
             minimum, maximum = maximum, minimum
 
@@ -499,22 +512,18 @@ def extract_salary(text):
             "currency": "USD",
             "max": maximum,
             "min": minimum,
-            "period": normalize_salary_period(match.group(3)),
+            "period": period,
             "published": True,
         }
 
-    # Importe único: se usa solamente si no se encontró un rango.
+    # Cantidad única. Solo se usa cuando no hay un rango.
     single_patterns = [
         re.compile(
-            r"\$\s*" + number
-            + r"\s*(?:per\s+)?"
-            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
+            r"\$\s*" + amount + period_pattern + r"?",
             re.IGNORECASE,
         ),
         re.compile(
-            r"\bUSD\s*" + number
-            + r"\s*(?:per\s+)?"
-            + r"(hourly|hour|hr|yearly|annual|annually|year|monthly|month)?",
+            r"\bUSD\s*" + amount + period_pattern + r"?",
             re.IGNORECASE,
         ),
     ]
@@ -525,13 +534,14 @@ def extract_salary(text):
         if not match:
             continue
 
-        amount = float(match.group(1).replace(",", ""))
+        value = parse_amount(match.group(1), match.group(2))
+        period = normalize_salary_period(match.group(3))
 
         return {
             "currency": "USD",
-            "max": amount,
-            "min": amount,
-            "period": normalize_salary_period(match.group(2)),
+            "max": value,
+            "min": value,
+            "period": period,
             "published": True,
         }
 
@@ -716,353 +726,75 @@ def extract_industry(text, job=None):
 
 def extract_work_mode(text):
     """
-    Devuelve Unknown cuando la descripción no permite determinar
-    la modalidad. No se presume que sea presencial por defecto.
+    Clasifica la modalidad usando señales explícitas.
+    Evita detectar Remote solo porque se menciona un equipo remoto.
+    Una indicación inequívoca de 100% presencial tiene prioridad.
     """
 
     if not text:
         return "Unknown"
 
-    lowered = text.lower()
+    lowered = normalize_space(text).lower()
 
-    # Primero se buscan modalidades explícitas.
-    if (
-        "li-hybrid" in lowered
-        or re.search(r"\bhybrid\b", lowered)
-    ):
-        return "Hybrid"
+    # Una declaración inequívoca de presencialidad tiene prioridad.
+    onsite_explicit_patterns = [
+        r"\b100\s*%\s*(?:on[- ]?site|onsite|in[- ]person)\b",
+        r"\bfully\s+on[- ]?site\b",
+        r"\bstrictly\s+on[- ]?site\b",
+        r"\bthis\s+is\s+an?\s+on[- ]?site\s+role\b",
+        r"\bon[- ]?site\s+position\b",
+        r"\bonsite\s+position\b",
+        r"\bwork\s+must\s+be\s+performed\s+on[- ]?site\b",
+    ]
 
-    if (
-        "li-remote" in lowered
-        or re.search(r"\bremote\b", lowered)
-        or "work from home" in lowered
-        or "work remotely" in lowered
-    ):
-        return "Remote"
-
-    if (
-        "li-onsite" in lowered
-        or re.search(r"\bon[- ]site\b", lowered)
-        or re.search(r"\bonsite\b", lowered)
-        or "on site" in lowered
-        or "in person at our office" in lowered
+    if any(
+        re.search(pattern, lowered)
+        for pattern in onsite_explicit_patterns
     ):
         return "On-site"
 
-    return "Unknown"
-
-
-# ============================================================
-# EDUCATION
-# ============================================================
-
-def extract_education(text):
-    if not text:
-        return []
-
-    lowered = text.lower()
-    education = []
-
-    if re.search(
-        r"\bhigh school\b|\bhigh-school\b|\bsecondary school\b",
-        lowered,
-    ):
-        education.append("High school")
-
-    if re.search(
-        r"\bassociate'?s?\b|\bassociates degree\b",
-        lowered,
-    ):
-        education.append("Associate degree")
-
-    if re.search(
-        r"\bundergraduate degree\b|\bbachelor'?s?\b|\bbachelor degree\b",
-        lowered,
-    ):
-        education.append("Bachelor's degree")
-
-    if re.search(
-        r"\bmaster'?s?\b|\bmaster degree\b",
-        lowered,
-    ):
-        education.append("Master's degree")
-
-    if re.search(r"\bph\.?d\.?\b|\bdoctorate\b", lowered):
-        education.append("Doctorate")
-
-    if re.search(r"\btechnical degree\b|\btechnical diploma\b", lowered):
-        education.append("Technical degree")
-
-    return education
-
-
-# ============================================================
-# EXPERIENCE
-# ============================================================
-
-def extract_experience(text):
-    if not text:
-        return None, []
-
-    normalized = (
-        text.replace("–", "-")
-        .replace("—", "-")
-        .replace("−", "-")
-    )
-
-    matches = []
-
-    patterns = [
-        re.compile(r"\b(\d+)\s*-\s*(\d+)\s+years?\b", re.IGNORECASE),
-        re.compile(r"\b(\d+)\s*\+\s*years?\b", re.IGNORECASE),
-        re.compile(
-            r"\b(?:minimum of|at least)\s+(\d+)\s+years?\b",
-            re.IGNORECASE,
-        ),
+    # Hybrid solo se reconoce por una indicación de modalidad,
+    # no por una mención incidental.
+    hybrid_patterns = [
+        r"\bhybrid\s+(?:work|schedule|role|position|model|arrangement)\b",
+        r"\bhybrid[- ]work\b",
+        r"\bhybrid\s+workplace\b",
+        r"\bthis\s+is\s+a\s+hybrid\b",
+        r"\bhybrid\b",
     ]
 
-    for index, pattern in enumerate(patterns):
-        for match in pattern.finditer(normalized):
-            if index == 0:
-                value = f"{match.group(1)}-{match.group(2)} years"
-            else:
-                value = f"{match.group(1)}+ years"
+    if any(
+        re.search(pattern, lowered)
+        for pattern in hybrid_patterns
+    ):
+        return "Hybrid"
 
-            start = max(0, match.start() - 80)
-            end = min(len(normalized), match.end() + 120)
-
-            matches.append({
-                "start": match.start(),
-                "value": value,
-                "context": normalize_space(normalized[start:end]),
-            })
-
-    if not matches:
-        return None, []
-
-    unique = []
-    seen = set()
-
-    for item in sorted(matches, key=lambda x: x["start"]):
-        key = (item["start"], item["value"])
-
-        if key not in seen:
-            unique.append(item)
-            seen.add(key)
-
-    primary = unique[0]["value"]
-    details = []
-    seen_values = set()
-
-    for item in unique:
-        if item["value"] in seen_values:
-            continue
-
-        details.append({
-            "experience": item["value"],
-            "context": item["context"],
-        })
-        seen_values.add(item["value"])
-
-    return primary, details
-
-
-# ============================================================
-# LICENSES
-# ============================================================
-
-def extract_licenses(text):
-    if not text:
-        return []
-
-    lowered = text.lower()
-    licenses = []
-
-    patterns = [
-        ("A&P", ["a&p", "airframe and powerplant"]),
-        ("Driver's license", [
-            "driver's license", "drivers license",
-            "valid driver's license", "valid drivers license",
-        ]),
-        ("FAA certification", ["faa certification", "faa license"]),
-        ("CPA", ["cpa license", "certified public accountant"]),
-        ("PMP", [
-            "pmp certification", "project management professional",
-        ]),
+    # Requiere evidencia explícita de que el puesto es remoto.
+    remote_patterns = [
+        r"\bfully\s+remote\b",
+        r"\b100\s*%\s+remote\b",
+        r"\bthis\s+is\s+a\s+remote\s+(?:role|position|job)\b",
+        r"\bremote\s+(?:role|position|job)\b",
+        r"\bremote[- ]first\b",
+        r"\bwork\s+remotely\b",
+        r"\bwork\s+from\s+home\b",
+        r"\bremote\s+work\s+arrangement\b",
+        r"\bposition\s+is\s+remote\b",
+        r"\bremote\s+eligible\b",
     ]
 
-    for name, keywords in patterns:
-        if any(keyword in lowered for keyword in keywords):
-            licenses.append(name)
+    if any(
+        re.search(pattern, lowered)
+        for pattern in remote_patterns
+    ):
+        return "Remote"
 
-    return licenses
-
-
-# ============================================================
-# REQUIREMENTS
-# ============================================================
-
-def extract_requirements(text):
-    experience, experience_details = extract_experience(text)
-
-    return {
-        "education": extract_education(text),
-        "experience": experience,
-        "experience_details": experience_details,
-        "licenses": extract_licenses(text),
-    }
-
-
-# ============================================================
-# DATES
-# ============================================================
-
-def parse_date_value(value):
-    if value is None:
-        return None
-
-    if isinstance(value, datetime):
-        dt = value
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        return dt.isoformat()
-
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-
-        return dt.isoformat()
-
-    except ValueError:
-        pass
-
-    for date_format in [
-        "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y",
-    ]:
-        try:
-            dt = datetime.strptime(value, date_format)
-            dt = dt.replace(tzinfo=timezone.utc)
-            return dt.isoformat()
-        except ValueError:
-            continue
-
-    return value
-
-
-def extract_dates(job):
-    posted_candidates = [
-        "first_published_at",
-        "first_published",
-        "published_at",
-        "published",
-        "date_posted",
-        "datePosted",
-        "created_at",
-        "createdAt",
-        "opened_at",
-        "opening_date",
-    ]
-
-    updated_candidates = [
-        "updated_at",
-        "updatedAt",
-        "last_updated_at",
-        "last_updated",
-        "modified_at",
-        "modifiedAt",
-    ]
-
-    posted_date = None
-    updated_date = None
-
-    for field in posted_candidates:
-        value = job.get(field)
-
-        if value:
-            posted_date = parse_date_value(value)
-            break
-
-    for field in updated_candidates:
-        value = job.get(field)
-
-        if value:
-            updated_date = parse_date_value(value)
-            break
-
-    return posted_date, updated_date
-
-
-# ============================================================
-# SOURCE
-# ============================================================
-
-def build_source(job, company, board_token):
-    job_id = job.get("id")
-
-    absolute_url = job.get("absolute_url") or job.get("url")
-
-    if not absolute_url and job_id:
-        absolute_url = (
-            f"https://boards.greenhouse.io/"
-            f"{board_token}/jobs/{job_id}"
-        )
-
-    return {
-        "name": "Greenhouse",
-        "type": "job_board_api",
-        "url": absolute_url,
-        "application_url": absolute_url,
-    }
-
-
-# ============================================================
-# NORMALIZER
-# ============================================================
-
-def normalize_greenhouse_job(job, company, board_token):
-    content = get_job_content(job)
-    location = extract_location(job)
-    eligibility = extract_eligibility(content)
-    salary = extract_salary(content)
-    requirements = extract_requirements(content)
-    posted_date, updated_date = extract_dates(job)
-
-    job_id = job.get("id")
-    title = job.get("title") or ""
-
-    return {
-        "company": company,
-        "title": title,
-        "job_id": (
-            f"greenhouse-{board_token}-{job_id}"
-            if job_id
-            else f"greenhouse-{board_token}"
-        ),
-        "description": content,
-        "location": location,
-        "eligibility": eligibility,
-        "salary": salary,
-        "employment_type": extract_employment_type(content),
-        "industry": extract_industry(content, job),
-        "work_mode": extract_work_mode(content),
-        "requirements": requirements,
-        "posted_date": posted_date,
-        "updated_date": updated_date,
-        "source": build_source(job, company, board_token),
-        "verification": {
-            # Significa que la publicación se obtuvo de la fuente;
-            # no confirma que el puesto siga aceptando solicitudes.
-            "status": "source_found",
-            "application_status": "not_confirmed",
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        },
-    }
+    # Presencialidad explícita sin ser necesariamente 100%.
+    onsite_patterns = [
+        r"\bon[- ]site\b",
+        r"\bonsite\b",
+        r"\bin[- ]person\s+at\s+(?:our|the)\s+office\b",
+        r"\boffice[- ]based\b",
+        r"\bin[- ]office\s+(?:role|position|work)\b",
+        r"\bwork\s+from\s+(?:our|the)\s+office\b",
+        r"\bmust\s+be
