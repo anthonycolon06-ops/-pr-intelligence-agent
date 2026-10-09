@@ -1,1021 +1,786 @@
+
 import re
 import html
 from datetime import datetime, timezone
 
 
-# ============================================================
-# US STATES
-# ============================================================
-
 US_STATES = {
-    "alabama": "AL", "alaska": "AK", "arizona": "AZ",
-    "arkansas": "AR", "california": "CA", "colorado": "CO",
-    "connecticut": "CT", "delaware": "DE", "florida": "FL",
-    "georgia": "GA", "hawaii": "HI", "idaho": "ID",
-    "illinois": "IL", "indiana": "IN", "iowa": "IA",
-    "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
-    "maine": "ME", "maryland": "MD", "massachusetts": "MA",
-    "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
-    "missouri": "MO", "montana": "MT", "nebraska": "NE",
-    "nevada": "NV", "new hampshire": "NH",
-    "new jersey": "NJ", "new mexico": "NM",
-    "new york": "NY", "north carolina": "NC",
-    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
-    "oregon": "OR", "pennsylvania": "PA",
-    "rhode island": "RI", "south carolina": "SC",
-    "south dakota": "SD", "tennessee": "TN", "texas": "TX",
-    "utah": "UT", "vermont": "VT", "virginia": "VA",
-    "washington": "WA", "west virginia": "WV",
-    "wisconsin": "WI", "wyoming": "WY",
-    "district of columbia": "DC",
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west virginia", "wisconsin", "wyoming", "district of columbia"
 }
 
 STATE_CODE_TO_NAME = {
-    code.lower(): name for name, code in US_STATES.items()
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico",
+    "NY": "New York", "NC": "North Carolina", "ND": "North Dakota",
+    "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+    "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+    "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+    "PR": "Puerto Rico", "GU": "Guam", "VI": "U.S. Virgin Islands",
+    "AS": "American Samoa", "MP": "Northern Mariana Islands"
+}
+
+COUNTRY_ALIASES = {
+    "us": "United States", "usa": "United States",
+    "u.s.": "United States", "u.s.a.": "United States",
+    "united states of america": "United States",
+    "united states": "United States",
+    "pr": "Puerto Rico", "pri": "Puerto Rico",
+    "puerto rico": "Puerto Rico",
+    "uk": "United Kingdom", "u.k.": "United Kingdom",
+    "gb": "United Kingdom", "great britain": "United Kingdom",
+    "uae": "United Arab Emirates", "ksa": "Saudi Arabia",
+    "in": "India", "pl": "Poland", "ca": "Canada",
+    "au": "Australia", "nz": "New Zealand", "de": "Germany",
+    "fr": "France", "es": "Spain", "it": "Italy",
+    "nl": "Netherlands", "br": "Brazil", "mx": "Mexico",
+    "sg": "Singapore", "ph": "Philippines", "ie": "Ireland",
+    "jp": "Japan", "kr": "South Korea", "cn": "China",
+    "za": "South Africa", "ch": "Switzerland", "se": "Sweden",
+    "no": "Norway", "dk": "Denmark", "fi": "Finland",
+    "pt": "Portugal", "be": "Belgium", "at": "Austria",
+    "cz": "Czechia", "ro": "Romania", "gr": "Greece",
+    "tr": "Turkey", "il": "Israel", "ar": "Argentina",
+    "cl": "Chile", "co": "Colombia", "cr": "Costa Rica"
 }
 
 
-# ============================================================
-# GENERAL HELPERS
-# ============================================================
-
 def normalize_space(value):
     if value is None:
-        return None
+        return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def decode_greenhouse_content(content):
     if not content:
         return ""
-
-    decoded = str(content)
-
-    for _ in range(4):
-        decoded = html.unescape(decoded)
-
-    decoded = (
-        decoded.replace("\\u0026", "&")
-        .replace("\\u003c", "<")
-        .replace("\\u003e", ">")
-        .replace("\\/", "/")
-    )
-
-    return decoded
+    return html.unescape(str(content))
 
 
-def html_to_text(content):
-    if not content:
+def html_to_text(value):
+    if not value:
         return ""
-
-    text = decode_greenhouse_content(content)
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</p\s*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</div\s*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</li\s*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = html.unescape(text).replace("\xa0", " ")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n+", "\n", text)
-
-    return text.strip()
+    value = str(value)
+    value = re.sub(r"(?is)<(script|style)\b.*?>.*?</\1>", " ", value)
+    value = re.sub(
+        r"(?i)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>",
+        "\n", value
+    )
+    value = re.sub(r"(?s)<[^>]+>", " ", value)
+    return normalize_space(html.unescape(value))
 
 
 def get_job_content(job):
-    content = job.get("content") or job.get("description") or ""
-    return html_to_text(content)
+    if not isinstance(job, dict):
+        return ""
+    for key in (
+        "content", "description", "descriptionPlain", "descriptionText",
+        "jobDescription", "job_description", "jobAd"
+    ):
+        value = job.get(key)
+        if isinstance(value, dict):
+            value = value.get("text") or value.get("description") or ""
+        if value:
+            return html_to_text(value)
+    return ""
 
 
-# ============================================================
-# LOCATION
-# ============================================================
+def _location_raw(job):
+    if isinstance(job, str):
+        return normalize_space(job)
+    if not isinstance(job, dict):
+        return ""
+
+    location = job.get("location")
+    if isinstance(location, dict):
+        raw = normalize_space(location.get("raw"))
+        if raw:
+            return raw
+        parts = []
+        for key in ("name", "city", "municipality", "region", "state", "country"):
+            value = normalize_space(location.get(key))
+            if value and value not in parts:
+                parts.append(value)
+        if parts:
+            return ", ".join(parts)
+    elif location:
+        return normalize_space(location)
+
+    offices = job.get("offices") or job.get("locations") or []
+    if isinstance(offices, list):
+        names = []
+        for office in offices:
+            if isinstance(office, dict):
+                name = office.get("name") or office.get("location") or office.get("city")
+            else:
+                name = office
+            name = normalize_space(name)
+            if name and name not in names:
+                names.append(name)
+        if names:
+            return ", ".join(names)
+
+    for key in ("locationName", "location_name", "workplace", "address"):
+        value = job.get(key)
+        if isinstance(value, dict):
+            value = ", ".join(
+                normalize_space(value.get(k))
+                for k in ("city", "region", "country")
+                if value.get(k)
+            )
+        if value:
+            return normalize_space(value)
+    return ""
+
 
 def extract_location(job):
-    location = job.get("location")
-    raw = ""
-    country_hint = ""
-
-    if isinstance(location, dict):
-        raw = location.get("name") or location.get("raw") or ""
-        country_hint = str(location.get("country") or "").strip()
-    elif isinstance(location, str):
-        raw = location
-
-    if not raw:
-        offices = job.get("offices", [])
-        if isinstance(offices, list):
-            names = [
-                str(office["name"])
-                for office in offices
-                if isinstance(office, dict) and office.get("name")
-            ]
-            raw = ", ".join(names)
-
-    raw = normalize_space(raw) or ""
-    lowered = raw.lower()
-    hint = country_hint.lower()
-
-    country = None
-    region = None
-    municipality = raw or None
-
-    if (
-        "puerto rico" in lowered
-        or hint in {"pr", "pri", "puerto rico"}
-        or re.search(r",\s*PR$", raw, re.IGNORECASE)
-    ):
-        country = "PR"
-        region = "Puerto Rico"
-
-        match = re.fullmatch(
-            r"(.+?),\s*(?:Puerto Rico|PR)",
-            raw,
-            re.IGNORECASE,
-        )
-
-        if match:
-            municipality = match.group(1).strip()
-        elif lowered in {"puerto rico", "pr"}:
-            municipality = "Puerto Rico"
-        else:
-            municipality = raw or "Puerto Rico"
-
-    else:
-        state_codes = set(US_STATES.values())
-
-        state_match = re.fullmatch(
-            r"(.+?),\s*([A-Z]{2})"
-            r"(?:,\s*(?:United States|USA|US))?",
-            raw,
-        )
-
-        for state_name in sorted(US_STATES, key=len, reverse=True):
-            match = re.fullmatch(
-                r"(.+?),\s*"
-                + re.escape(state_name)
-                + r"(?:,\s*(?:United States|USA|US))?",
-                raw,
-                re.IGNORECASE,
-            )
-
-            if match:
-                country = "US"
-                region = US_STATES[state_name]
-                municipality = match.group(1).strip()
-                break
-
-        if country is None and state_match:
-            state_code = state_match.group(2).upper()
-            if state_code in state_codes:
-                country = "US"
-                region = state_code
-                municipality = state_match.group(1).strip()
-
-        if country is None and re.fullmatch(
-            r"(?:United States|USA|U\.S\.A\.?)"
-            r"\s*(?:\(\s*Remote\s*\))?",
-            raw,
-            re.IGNORECASE,
-        ):
-            country = "US"
-            municipality = "United States (Remote)"
-
-        if country is None and re.fullmatch(
-            r"(?:US|U\.S\.)\s*\(\s*Remote\s*\)",
-            raw,
-            re.IGNORECASE,
-        ):
-            country = "US"
-            municipality = "United States (Remote)"
-
-        countries = {
-            "india": "IN", "poland": "PL", "canada": "CA",
-            "united kingdom": "GB", "england": "GB",
-            "ireland": "IE", "australia": "AU",
-            "new zealand": "NZ", "germany": "DE",
-            "france": "FR", "spain": "ES", "italy": "IT",
-            "portugal": "PT", "netherlands": "NL",
-            "brazil": "BR", "mexico": "MX",
-            "philippines": "PH", "singapore": "SG",
-            "japan": "JP", "china": "CN", "israel": "IL",
-            "united arab emirates": "AE", "south africa": "ZA",
-            "colombia": "CO", "argentina": "AR", "chile": "CL",
-        }
-
-        country_codes = {
-            "us": "US", "usa": "US", "united states": "US",
-            "in": "IN", "ind": "IN", "pl": "PL", "pol": "PL",
-            "ca": "CA", "can": "CA", "gb": "GB", "gbr": "GB",
-            "au": "AU", "aus": "AU", "de": "DE", "deu": "DE",
-            "fr": "FR", "fra": "FR", "es": "ES", "esp": "ES",
-            "mx": "MX", "mex": "MX",
-        }
-
-        if country is None:
-            if hint in country_codes:
-                country = country_codes[hint]
-            else:
-                for country_name in sorted(
-                    countries, key=len, reverse=True
-                ):
-                    if re.search(
-                        r"\b" + re.escape(country_name) + r"\b",
-                        lowered,
-                    ):
-                        country = countries[country_name]
-                        break
-
-            if country is not None:
-                parts = [
-                    part.strip()
-                    for part in raw.split(",")
-                    if part.strip()
-                ]
-                if parts and parts[-1].lower() in countries:
-                    municipality = ", ".join(parts[:-1]) or raw
-
-    return {
-        "country": country,
-        "municipality": municipality,
+    raw = _location_raw(job)
+    low = raw.lower()
+    result = {
+        "country": None,
+        "municipality": None,
         "raw": raw,
-        "region": region,
+        "region": None
     }
+    if not raw:
+        return result
 
+    # Do not invent a physical location for remote jobs.
+    if re.search(r"\b(remote|work from home|distributed|anywhere)\b", low):
+        if re.search(r"\b(united states|u\.s\.|usa|us only|remote - us)\b", low):
+            result["country"] = "United States"
+        elif "puerto rico" in low or re.search(r"\bremote\s*[-,]\s*pr\b", low):
+            result["country"] = "Puerto Rico"
+        return result
 
-# ============================================================
-# ELIGIBILITY
-# ============================================================
+    if "puerto rico" in low or re.search(r"(?:,\s*|\b)PR$", raw.strip(), re.I):
+        result["country"] = "Puerto Rico"
+        parts = [normalize_space(p) for p in raw.split(",") if normalize_space(p)]
+        for part in parts:
+            if part.lower() not in {
+                "puerto rico", "pr", "pri", "united states", "usa", "us",
+                "remote", "hybrid"
+            }:
+                result["municipality"] = part
+                break
+        return result
+
+    # Prefer structured location data when the source provides it.
+    if isinstance(job, dict) and isinstance(job.get("location"), dict):
+        loc = job["location"]
+        country = normalize_space(loc.get("country") or loc.get("countryCode"))
+        region = normalize_space(loc.get("region") or loc.get("state"))
+        city = normalize_space(loc.get("city") or loc.get("municipality"))
+
+        if country:
+            result["country"] = COUNTRY_ALIASES.get(country.lower(), country)
+        if region:
+            result["region"] = STATE_CODE_TO_NAME.get(region.upper(), region)
+        if city:
+            result["municipality"] = city
+
+        if country or region or city:
+            return result
+
+    parts = [normalize_space(p) for p in raw.split(",") if normalize_space(p)]
+    last = parts[-1] if parts else raw
+    last_low = last.lower()
+
+    # City, State, Country
+    if last_low in {"united states", "usa", "us", "u.s.", "u.s.a."} and len(parts) >= 2:
+        state = parts[-2]
+        if state.lower() in US_STATES or state.upper() in STATE_CODE_TO_NAME:
+            result["country"] = "United States"
+            result["region"] = STATE_CODE_TO_NAME.get(state.upper(), state.title())
+            result["municipality"] = parts[0] if len(parts) >= 3 else None
+            return result
+
+    if last_low in COUNTRY_ALIASES:
+        result["country"] = COUNTRY_ALIASES[last_low]
+        if len(parts) >= 2:
+            result["municipality"] = parts[0]
+        if len(parts) >= 3:
+            result["region"] = parts[-2]
+        return result
+
+    # City, state name or abbreviation.
+    if len(parts) >= 2:
+        state = parts[-1]
+        if state.lower() in US_STATES or state.upper() in STATE_CODE_TO_NAME:
+            result["country"] = "United States"
+            result["region"] = STATE_CODE_TO_NAME.get(state.upper(), state.title())
+            result["municipality"] = parts[0]
+            return result
+
+    # A country name anywhere in the raw location.
+    for alias, canonical in sorted(
+        COUNTRY_ALIASES.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        if re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", low):
+            result["country"] = canonical
+            if len(parts) >= 2:
+                result["municipality"] = parts[0]
+            if len(parts) >= 3:
+                result["region"] = parts[-2]
+            return result
+
+    # Preserve unknown locations without claiming a country.
+    if len(parts) >= 2:
+        result["municipality"] = parts[0]
+        result["region"] = parts[1]
+    else:
+        result["municipality"] = raw
+    return result
+
 
 def extract_eligibility(text):
-    empty = {"countries": [], "states": [], "territories": []}
+    content = normalize_space(text)
+    result = {"countries": [], "states": [], "territories": []}
+    if not content:
+        return result
 
-    if not text:
-        return empty
+    low = content.lower()
+    markers = (
+        "eligible locations", "eligible location", "must be located in",
+        "locations:", "location:", "work authorization",
+        "authorized to work in", "candidates must reside in",
+        "must reside in", "based in", "remote in", "remote within",
+        "available in"
+    )
+    relevant = low
+    for marker in markers:
+        idx = low.find(marker)
+        if idx >= 0:
+            relevant = low[idx:idx + 1500]
+            break
 
-    normalized = normalize_space(text)
-    lowered = normalized.lower()
+    if "puerto rico" in relevant:
+        result["territories"].append("Puerto Rico")
 
-    markers = [
-        "eligible hiring locations", "eligible locations",
-        "eligible to work", "eligible candidates", "can hire",
-        "can hire full-time residents", "residents of the following",
-        "hiring locations", "locations where we can hire",
-    ]
-
-    positions = [
-        lowered.find(marker)
-        for marker in markers
-        if lowered.find(marker) >= 0
-    ]
-
-    if not positions:
-        return empty
-
-    eligibility_text = normalized[min(positions):]
-
-    stop_patterns = [
-        r"\bCalifornia Residents:", r"\bBenefits\b",
-        r"\bIndividual pay\b", r"\bStarting pay range\b",
-        r"\bEqual Opportunity Employer\b", r"\bAbout Bold\b",
-        r"\b#LI-",
-    ]
-
-    stop_positions = []
-    for pattern in stop_patterns:
-        match = re.search(pattern, eligibility_text, re.IGNORECASE)
-        if match:
-            stop_positions.append(match.start())
-
-    if stop_positions:
-        eligibility_text = eligibility_text[:min(stop_positions)]
-
-    lowered_eligibility = eligibility_text.lower()
-    states_found = []
-    territories_found = []
-
-    for state_name, state_code in US_STATES.items():
-        if re.search(
-            r"\b" + re.escape(state_name) + r"\b",
-            lowered_eligibility,
-        ):
-            states_found.append(state_code)
-
-    for state_code in STATE_CODE_TO_NAME:
-        if re.search(
-            r"(?<![A-Za-z])" + re.escape(state_code)
-            + r"(?![A-Za-z])",
-            lowered_eligibility,
-        ):
-            code = state_code.upper()
-            if code not in states_found:
-                states_found.append(code)
-
-    if re.search(r"\bpuerto rico\b", lowered_eligibility):
-        territories_found.append("PR")
-
-    territory_patterns = {
-        r"guam": "GU",
-        r"u\.s\. virgin islands": "VI",
-        r"us virgin islands": "VI",
-        r"virgin islands": "VI",
-        r"american samoa": "AS",
-        r"northern mariana islands": "MP",
+    territory_aliases = {
+        "guam": "Guam",
+        "u.s. virgin islands": "U.S. Virgin Islands",
+        "us virgin islands": "U.S. Virgin Islands",
+        "american samoa": "American Samoa",
+        "northern mariana islands": "Northern Mariana Islands"
     }
+    for alias, canonical in territory_aliases.items():
+        if alias in relevant and canonical not in result["territories"]:
+            result["territories"].append(canonical)
 
-    for pattern, code in territory_patterns.items():
-        if re.search(r"\b" + pattern + r"\b", lowered_eligibility):
-            if code not in territories_found:
-                territories_found.append(code)
+    if re.search(r"\b(united states|u\.s\.|usa|us-based|within the us)\b", relevant):
+        result["countries"].append("United States")
+    if "canada" in relevant:
+        result["countries"].append("Canada")
+    if "united kingdom" in relevant:
+        result["countries"].append("United Kingdom")
 
-    countries_found = []
+    for state in US_STATES:
+        if re.search(r"(?<!\w)" + re.escape(state) + r"(?!\w)", relevant):
+            result["states"].append(state.title())
 
-    if (
-        states_found
-        or territories_found
-        or re.search(
-            r"\bu\.?s\.?\b|\bunited states\b|\bu\.?s\.?\s+states\b",
-            lowered_eligibility,
-        )
-    ):
-        countries_found.append("US")
+    for code, name in STATE_CODE_TO_NAME.items():
+        if code in {"PR", "GU", "VI", "AS", "MP"}:
+            continue
+        if re.search(r"(?<!\w)" + re.escape(code) + r"(?!\w)", relevant):
+            result["states"].append(name)
 
-    return {
-        "countries": sorted(set(countries_found)),
-        "states": sorted(set(states_found)),
-        "territories": sorted(set(territories_found)),
-    }
+    result["countries"] = sorted(set(result["countries"]))
+    result["states"] = sorted(set(result["states"]))
+    result["territories"] = sorted(set(result["territories"]))
+    return result
 
-
-# ============================================================
-# SALARY
-# ============================================================
 
 def normalize_salary_period(period):
-    if not period:
+    value = normalize_space(period).lower().replace(".", "")
+    if not value:
         return "unknown"
 
-    period = period.lower().strip()
-
-    if period in {"hour", "hours", "hr", "hourly"}:
+    if any(term in value for term in (
+        "hour", "hourly", "per hour", "/hr", " hr", "hrly"
+    )) or value in {"h", "hr", "hrs"}:
         return "hour"
-    if period in {"year", "years", "annual", "annually", "yearly"}:
-        return "year"
-    if period in {"month", "months", "monthly"}:
+    if any(term in value for term in (
+        "biweekly", "bi-weekly", "every two weeks", "per pay period"
+    )):
+        return "biweekly"
+    if any(term in value for term in (
+        "day", "daily", "per diem", "/day"
+    )) or value in {"d", "dy"}:
+        return "day"
+    if any(term in value for term in (
+        "week", "weekly", "per week", "/wk"
+    )) or value in {"w", "wk", "wks"}:
+        return "week"
+    if any(term in value for term in (
+        "month", "monthly", "per month", "/mo"
+    )) or value in {"mo", "mos"}:
         return "month"
-
+    if any(term in value for term in (
+        "year", "yearly", "annual", "annually", "per annum", "/yr"
+    )) or value in {"yr", "yrs", "y"}:
+        return "year"
     return "unknown"
 
 
-def extract_salary(text):
-    empty = {
-        "currency": "USD",
-        "max": None,
-        "min": None,
-        "period": "unknown",
-        "published": False,
-    }
+def _salary_number(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = normalize_space(value).replace(",", "")
+    match = re.search(r"\$?\s*(\d+(?:\.\d{1,2})?)", text)
+    return float(match.group(1)) if match else None
 
-    if not text:
+
+def extract_salary(text):
+    """
+    Extract salary only when a plausible salary phrase is present.
+    Unknown pay periods remain unknown; no period is invented.
+    """
+    content = html_to_text(text)
+    empty = {
+        "min": None, "max": None, "currency": None,
+        "period": "unknown", "display": None
+    }
+    if not content:
         return empty
 
-    normalized = (
-        str(text).replace("–", "-")
-        .replace("—", "-").replace("−", "-")
-    )
-
-    amount = r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kKmM])?"
-
-    period_pattern = (
-        r"(?:\s*(?:per|/)\s*)?"
-        r"(hourly|hour|hr|hours|yearly|annual|annually|year|years|"
-        r"monthly|month|months)"
-        r"(?:\s+rate|\s+salary)?"
-    )
-
-    optional_period = r"(?:" + period_pattern + r")?"
-
-    def parse_amount(number_text, suffix):
-        value = float(number_text.replace(",", ""))
-
-        if suffix:
-            suffix = suffix.lower()
-            if suffix == "k":
-                value *= 1000
-            elif suffix == "m":
-                value *= 1000000
-
-        return value
-
-    range_patterns = [
-        re.compile(
-            r"\$\s*" + amount
-            + r"\s*(?:-|to|through)\s*\$?\s*" + amount
-            + optional_period,
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\bUSD\s*" + amount
-            + r"\s*(?:-|to|through)\s*(?:USD\s*)?\$?\s*" + amount
-            + optional_period,
-            re.IGNORECASE,
-        ),
+    patterns = [
+        r"(?is)(?:salary|pay|compensation|wage|rate|earnings|base pay|base salary|salary range|pay range)"
+        r"[^.\n]{0,100}?"
+        r"((?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?"
+        r"(?:\s*(?:-|–|—|to)\s*(?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?)?)"
+        r"\s*(per\s+hour|per\s+day|per\s+week|per\s+month|per\s+year|hourly|daily|weekly|monthly|annually|annual|yearly|hour|day|week|month|year|/hr|/hour|/year)?",
+        r"(?is)((?:USD\s*)?\$\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?"
+        r"\s*(?:-|–|—|to)\s*(?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?)"
+        r"\s*(per\s+hour|per\s+day|per\s+week|per\s+month|per\s+year|hourly|daily|weekly|monthly|annually|annual|yearly|hour|day|week|month|year|/hr|/hour|/year)"
     ]
 
-    for pattern in range_patterns:
-        match = pattern.search(normalized)
+    for pattern in patterns:
+        match = re.search(pattern, content)
         if not match:
             continue
 
-        minimum = parse_amount(match.group(1), match.group(2))
-        maximum = parse_amount(match.group(3), match.group(4))
-        period = normalize_salary_period(match.group(5))
+        amounts_text = match.group(1)
+        period_text = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
+        numbers = []
+        for number, suffix in re.findall(
+            r"\$?\s*(\d[\d,]*(?:\.\d{1,2})?)\s*([kK]?)",
+            amounts_text
+        ):
+            try:
+                parsed = float(number.replace(",", ""))
+                if suffix.lower() == "k":
+                    parsed *= 1000
+                numbers.append(parsed)
+            except (ValueError, TypeError):
+                continue
 
-        if minimum > maximum:
-            minimum, maximum = maximum, minimum
-
-        return {
-            "currency": "USD",
-            "max": maximum,
-            "min": minimum,
-            "period": period,
-            "published": True,
-        }
-
-    single_patterns = [
-        re.compile(r"\$\s*" + amount + optional_period, re.IGNORECASE),
-        re.compile(r"\bUSD\s*" + amount + optional_period, re.IGNORECASE),
-    ]
-
-    for pattern in single_patterns:
-        match = pattern.search(normalized)
-        if not match:
-            continue
-
-        value = parse_amount(match.group(1), match.group(2))
-        period = normalize_salary_period(match.group(3))
-
-        return {
-            "currency": "USD",
-            "max": value,
-            "min": value,
-            "period": period,
-            "published": True,
-        }
+        if numbers:
+            minimum = min(numbers)
+            maximum = max(numbers) if len(numbers) > 1 else minimum
+            return {
+                "min": minimum,
+                "max": maximum,
+                "currency": "USD" if "$" in amounts_text or "USD" in amounts_text.upper() else None,
+                "period": normalize_salary_period(period_text),
+                "display": normalize_space(match.group(0))[:240]
+            }
 
     return empty
 
 
-# ============================================================
-# EMPLOYMENT TYPE
-# ============================================================
+def _salary_from_job_fields(job):
+    if not isinstance(job, dict):
+        return None
+
+    for key in ("salary", "salary_range", "salaryRange", "compensation", "payRange"):
+        value = job.get(key)
+        if not value:
+            continue
+
+        if isinstance(value, dict):
+            minimum = _salary_number(
+                value.get("min") or value.get("minimum") or value.get("minValue")
+            )
+            maximum = _salary_number(
+                value.get("max") or value.get("maximum") or value.get("maxValue")
+            )
+            currency = value.get("currency") or value.get("currencyCode")
+            period = normalize_salary_period(
+                value.get("period") or value.get("interval") or
+                value.get("unit") or value.get("payFrequency")
+            )
+            display = value.get("display") or value.get("description") or value.get("text")
+
+            if minimum is not None or maximum is not None:
+                if minimum is None:
+                    minimum = maximum
+                if maximum is None:
+                    maximum = minimum
+                if maximum < minimum:
+                    minimum, maximum = maximum, minimum
+                return {
+                    "min": minimum,
+                    "max": maximum,
+                    "currency": currency or ("USD" if "$" in str(display or "") else None),
+                    "period": period,
+                    "display": normalize_space(display) or None
+                }
+
+        elif isinstance(value, (int, float)):
+            return {
+                "min": float(value), "max": float(value),
+                "currency": None, "period": "unknown", "display": str(value)
+            }
+        else:
+            parsed = extract_salary(value)
+            if parsed["min"] is not None:
+                return parsed
+
+    return None
+
 
 def extract_employment_type(text):
-    if not text:
+    value = normalize_space(text).lower()
+    if not value:
         return "Unknown"
-
-    lowered = text.lower()
-
-    if re.search(r"\bfull[- ]time\b", lowered):
+    if re.search(r"\b(full[\s-]?time|full time employment)\b", value):
         return "Full-time"
-    if re.search(r"\bpart[- ]time\b", lowered):
+    if re.search(r"\b(part[\s-]?time|part time employment)\b", value):
         return "Part-time"
-    if re.search(
-        r"\binternship\b|\bintern position\b|\bintern role\b",
-        lowered,
-    ):
+    if re.search(r"\b(internship|intern\b|interns\b)", value):
         return "Internship"
-    if re.search(
-        r"\btemporary position\b|\btemporary role\b|\btemporary job\b",
-        lowered,
-    ):
+    if re.search(r"\b(temporary|temp position|seasonal)\b", value):
         return "Temporary"
-    if re.search(
-        r"\bcontract position\b|\bcontract role\b|\bcontractor position\b",
-        lowered,
-    ):
+    if re.search(r"\b(contractor|contract position|fixed[\s-]?term contract|contract employment)\b", value):
         return "Contract"
-
+    if re.search(r"\b(permanent position|regular employee)\b", value):
+        return "Permanent"
     return "Unknown"
 
 
-# ============================================================
-# INDUSTRY
-# ============================================================
-
 def extract_industry(text, job=None):
-    job = job or {}
-    title = str(job.get("title") or "").lower()
-    department = str(job.get("department") or "").lower()
-    content = (text or "").lower()
+    if isinstance(text, dict) and job is None:
+        job = text
+        text = get_job_content(job)
 
-    technology_terms = [
-        "software", "developer", "engineer", "engineering",
-        "artificial intelligence", "machine learning",
-        "data scientist", "data engineer", "systems analyst",
-        "systems administrator", "information technology",
-        "technology", "technical", "devops", "cloud",
-        "cybersecurity", "software architect",
+    title = ""
+    department = ""
+    if isinstance(job, dict):
+        title = normalize_space(job.get("title") or job.get("name"))
+        departments = job.get("departments") or job.get("department") or job.get("team") or ""
+        if isinstance(departments, list):
+            department = " ".join(
+                normalize_space(item.get("name") if isinstance(item, dict) else item)
+                for item in departments
+            )
+        elif isinstance(departments, dict):
+            department = normalize_space(departments.get("name"))
+        else:
+            department = normalize_space(departments)
+
+    combined = f"{title} {department} {normalize_space(text)}".lower()
+
+    rules = [
+        ("Healthcare", r"\b(nurse|nursing|physician|doctor|medical|clinical|patient|pharmacy|therapist|hospital|healthcare|health care|dental)\b"),
+        ("Aviation", r"\b(aircraft|aviation|airline|airport|flight crew|pilot|avionics|a&p mechanic|ground handling|ramp agent|line service technician|air cargo)\b"),
+        ("Manufacturing", r"\b(manufactur\w*|production operator|production worker|assembly line|fabrication|machinist|quality inspector|plant operator)\b"),
+        ("Logistics", r"\b(warehouse|inventory|fulfillment|distribution center|shipping|receiving|freight|cargo|supply chain|material handler|picker|packer)\b"),
+        ("Construction", r"\b(construction|carpenter|concrete|electrician|plumber|welder|mason|heavy equipment|jobsite)\b"),
+        ("Maintenance", r"\b(maintenance|facilities technician|building engineer|repair technician|mechanic|hvac|refrigeration|groundskeeper)\b"),
+        ("Transportation", r"\b(truck driver|delivery driver|fleet|transportation|bus driver|courier|dispatcher|driver\b)\b"),
+        ("Restaurants", r"\b(cook|chef|line cook|dishwasher|server|waiter|waitress|restaurant|food prep|barista)\b"),
+        ("Hospitality", r"\b(hotel|resort|guest services|housekeeping|front desk|concierge|event staff|tourism)\b"),
+        ("Retail", r"\b(retail|cashier|sales associate|store associate|merchandis|stock associate|store manager)\b"),
+        ("Security", r"\b(security guard|security officer|loss prevention|protective services|surveillance)\b"),
+        ("Customer Service", r"\b(customer service|call center|contact center|client support|customer care|help desk)\b"),
+        ("Finance", r"\b(accountant|accounting|bookkeep|financial analyst|banking|investment|payroll|accounts payable|accounts receivable|auditor)\b"),
+        ("Government", r"\b(government|public sector|municipal|federal agency|civil service|public administration)\b"),
+        ("Education", r"\b(teacher|educator|school|university|professor|instructor|tutor|curriculum|academic)\b"),
+        ("Sales", r"\b(sales representative|account executive|business development|sales manager|account manager|\bsales\b)\b"),
+        ("Marketing & Design", r"\b(marketing|graphic design|designer|creative director|copywriter|brand|communications|social media)\b"),
+        ("Administrative", r"\b(administrative assistant|office assistant|receptionist|office manager|executive assistant|data entry|clerical)\b"),
+        ("Technology", r"\b(software|developer|programmer|information technology|cybersecurity|data engineer|machine learning|artificial intelligence|cloud engineer|devops|systems analyst|product manager|ux designer|it support)\b"),
+        ("Engineering", r"\b(civil engineer|mechanical engineer|electrical engineer|industrial engineer|chemical engineer|aerospace engineer|engineering technician)\b"),
     ]
 
-    if any(term in title for term in technology_terms):
-        return "Technology"
-
-    if any(
-        term in department
-        for term in ["technology", "engineering", "software", "data"]
-    ):
-        return "Technology"
-
-    design_terms = [
-        "visual designer", "graphic designer", "ui designer",
-        "ux designer", "ux/ui designer", "product designer",
-        "brand designer", "digital designer", "marketing designer",
-        "content designer", "creative designer", "web designer",
-    ]
-
-    if any(term in title for term in design_terms):
-        return "Marketing & Design"
-
-    if any(
-        term in department
-        for term in [
-            "marketing & design", "marketing and design", "creative",
-            "brand", "visual design", "graphic design", "ux/ui",
-        ]
-    ):
-        return "Marketing & Design"
-
-    categories = [
-        ("Aviation", [
-            "aviation", "aircraft", "airline", "airport", "aerospace",
-            "flight operations", "air cargo",
-        ]),
-        ("Manufacturing", [
-            "manufacturing", "production", "assembly", "fabrication",
-            "machine operator", "production operator",
-        ]),
-        ("Logistics", [
-            "logistics", "warehouse", "supply chain", "inventory",
-            "shipping", "receiving", "distribution",
-        ]),
-        ("Healthcare", [
-            "nurse", "nursing", "medical assistant", "medical technician",
-            "healthcare", "health care", "clinical", "pharmacy",
-            "pharmacist", "therapist", "physician", "doctor",
-            "radiology", "patient care",
-        ]),
-        ("Construction", [
-            "construction", "carpenter", "electrician", "plumber",
-            "welder", "concrete", "mason", "roofer",
-        ]),
-        ("Maintenance", [
-            "maintenance", "mechanic", "industrial technician",
-            "equipment technician",
-        ]),
-        ("Transportation", [
-            "driver", "delivery driver", "transportation",
-            "truck driver", "courier", "dispatcher",
-        ]),
-        ("Retail", [
-            "retail", "store associate", "sales associate",
-            "cashier", "store manager",
-        ]),
-        ("Restaurants", [
-            "restaurant", "server", "waiter", "waitress", "cook",
-            "chef", "food service", "line cook", "dishwasher",
-        ]),
-        ("Hospitality", [
-            "hotel", "resort", "hospitality", "front desk",
-            "guest services", "housekeeping",
-        ]),
-        ("Security", ["security", "security officer", "security guard"]),
-        ("Sales", [
-            "sales", "account executive", "sales representative",
-            "business development",
-        ]),
-        ("Customer Service", [
-            "customer service", "customer support", "call center",
-            "contact center",
-        ]),
-        ("Finance", [
-            "accountant", "accounting", "finance", "financial analyst",
-            "financial", "bookkeeper", "banking",
-        ]),
-        ("Administrative", [
-            "administrative", "administration", "office assistant",
-            "receptionist", "executive assistant", "office coordinator",
-        ]),
-        ("Education", [
-            "teacher", "professor", "instructor", "education",
-            "school counselor", "academic",
-        ]),
-        ("Government", [
-            "government", "federal", "municipal", "public sector",
-        ]),
-    ]
-
-    for category, terms in categories:
-        if any(term in title for term in terms):
-            return category
-
-    strong_technology_content = [
-        "software engineering", "software development", "javascript",
-        "typescript", "python", "sql", "llm", "large language model",
-        "machine learning", "artificial intelligence", "rest api",
-        "soap api", "ci/cd", "database modeling", "data modeling",
-        "cloud infrastructure", "devops",
-    ]
-
-    if sum(1 for term in strong_technology_content if term in content) >= 2:
-        return "Technology"
-
+    for industry, pattern in rules:
+        if re.search(pattern, combined):
+            return industry
     return "Other"
 
 
-# ============================================================
-# WORK MODE
-# ============================================================
-
 def extract_work_mode(text):
-    if not text:
+    value = normalize_space(text).lower()
+    if not value:
         return "Unknown"
-
-    lowered = normalize_space(text).lower()
-
-    onsite_explicit_patterns = [
-        r"\b100\s*%\s*(?:on[- ]?site|onsite|in[- ]person)\b",
-        r"\bfully\s+on[- ]?site\b",
-        r"\bstrictly\s+on[- ]?site\b",
-        r"\bthis\s+is\s+an?\s+on[- ]?site\s+role\b",
-        r"\bon[- ]?site\s+position\b",
-        r"\bonsite\s+position\b",
-        r"\bwork\s+must\s+be\s+performed\s+on[- ]?site\b",
-    ]
-
-    if any(re.search(pattern, lowered) for pattern in onsite_explicit_patterns):
-        return "On-site"
-
-    if re.search(
-        r"\bhybrid\s+(?:work|schedule|role|position|model|arrangement)\b"
-        r"|\bhybrid[- ]work\b|\bhybrid\s+workplace\b"
-        r"|\bthis\s+is\s+a\s+hybrid\b|\bhybrid\b",
-        lowered,
-    ):
+    if re.search(r"\b(hybrid|partially remote|remote and on[- ]site|mix of remote and office)\b", value):
         return "Hybrid"
-
-    remote_patterns = [
-        r"\bfully\s+remote\b",
-        r"\b100\s*%\s+remote\b",
-        r"\bthis\s+is\s+a\s+remote\s+(?:role|position|job)\b",
-        r"\bremote\s+(?:role|position|job)\b",
-        r"\bremote[- ]first\b",
-        r"\bwork\s+remotely\b",
-        r"\bwork\s+from\s+home\b",
-        r"\bremote\s+work\s+arrangement\b",
-        r"\bposition\s+is\s+remote\b",
-        r"\bremote\s+eligible\b",
-    ]
-
-    if any(re.search(pattern, lowered) for pattern in remote_patterns):
+    if re.search(r"\b(fully remote|100% remote|remote position|remote role|work from home|work remotely|remote[- ]first|distributed team|anywhere in the world|remote)\b", value):
         return "Remote"
-
-    onsite_patterns = [
-        r"\bon[- ]?site\b", r"\bonsite\b",
-        r"\bin[- ]person\s+at\s+(?:our|the)\s+office\b",
-        r"\boffice[- ]based\b", r"\bin[- ]office\s+(?:role|position|work)\b",
-        r"\bwork\s+from\s+(?:our|the)\s+office\b",
-        r"\bmust\s+be\s+present\s+at\s+the\s+office\b",
-    ]
-
-    if any(re.search(pattern, lowered) for pattern in onsite_patterns):
+    if re.search(r"\b(on[- ]site|onsite|in[- ]person|in office|office based|office-based|must be present at|work at our facility)\b", value):
         return "On-site"
-
     return "Unknown"
 
 
-# ============================================================
-# EDUCATION
-# ============================================================
-
 def extract_education(text):
-    if not text:
-        return []
+    value = normalize_space(text).lower()
+    requirements = []
+    patterns = [
+        (r"\b(ph\.?d\.?|doctorate|doctoral degree)\b", "Doctorate"),
+        (r"\b(master'?s degree|master of|mba)\b", "Master's degree"),
+        (r"\b(bachelor'?s degree|bachelor of|undergraduate degree)\b", "Bachelor's degree"),
+        (r"\b(associate'?s degree|associate degree)\b", "Associate degree"),
+        (r"\b(high school diploma|high school degree|ged)\b", "High school diploma or equivalent"),
+        (r"\b(technical diploma|vocational diploma|trade school)\b", "Technical/vocational education"),
+    ]
+    for pattern, label in patterns:
+        if re.search(pattern, value):
+            requirements.append(label)
+    return requirements
 
-    lowered = text.lower()
-    education = []
-
-    if re.search(r"\bhigh school\b|\bhigh-school\b|\bsecondary school\b", lowered):
-        education.append("High school")
-    if re.search(r"\bassociate'?s?\b|\bassociates degree\b", lowered):
-        education.append("Associate degree")
-    if re.search(
-        r"\bundergraduate degree\b|\bbachelor'?s?\b|\bbachelor degree\b",
-        lowered,
-    ):
-        education.append("Bachelor's degree")
-    if re.search(r"\bmaster'?s?\b|\bmaster degree\b", lowered):
-        education.append("Master's degree")
-    if re.search(r"\bph\.?d\.?\b|\bdoctorate\b", lowered):
-        education.append("Doctorate")
-    if re.search(r"\btechnical degree\b|\btechnical diploma\b", lowered):
-        education.append("Technical degree")
-
-    return education
-
-
-# ============================================================
-# EXPERIENCE
-# ============================================================
 
 def extract_experience(text):
-    if not text:
-        return None, []
-
-    normalized = (
-        text.replace("–", "-")
-        .replace("—", "-")
-        .replace("−", "-")
-    )
-
-    matches = []
-    patterns = [
-        re.compile(r"\b(\d+)\s*-\s*(\d+)\s+years?\b", re.IGNORECASE),
-        re.compile(r"\b(\d+)\s*\+\s*years?\b", re.IGNORECASE),
-        re.compile(
-            r"\b(?:minimum of|at least)\s+(\d+)\s+years?\b",
-            re.IGNORECASE,
-        ),
-    ]
-
-    for index, pattern in enumerate(patterns):
-        for match in pattern.finditer(normalized):
-            if index == 0:
-                value = f"{match.group(1)}-{match.group(2)} years"
-            else:
-                value = f"{match.group(1)}+ years"
-
-            start = max(0, match.start() - 80)
-            end = min(len(normalized), match.end() + 120)
-
-            matches.append({
-                "start": match.start(),
-                "value": value,
-                "context": normalize_space(normalized[start:end]),
-            })
-
-    if not matches:
-        return None, []
-
-    unique = []
-    seen = set()
-
-    for item in sorted(matches, key=lambda x: x["start"]):
-        key = (item["start"], item["value"])
-        if key not in seen:
-            unique.append(item)
-            seen.add(key)
-
-    primary = unique[0]["value"]
+    value = normalize_space(text).lower()
     details = []
-    seen_values = set()
+    patterns = [
+        r"\b(?:minimum of|at least|min\.?)\s*(\d{1,2})\+?\s+years?(?:\s+of)?\s+(?:relevant\s+)?experience\b",
+        r"\b(\d{1,2})\s*(?:-|to)\s*(\d{1,2})\s+years?(?:\s+of)?\s+(?:relevant\s+)?experience\b",
+        r"\b(\d{1,2})\+?\s+years?(?:\s+of)?\s+(?:relevant\s+)?experience\b",
+        r"\bexperience\s+of\s+(\d{1,2})\+?\s+years?\b",
+    ]
+    years = None
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if match:
+            years = int(match.group(1))
+            details.append(normalize_space(match.group(0)))
+            break
+    return {"years": years, "details": details}
 
-    for item in unique:
-        if item["value"] in seen_values:
-            continue
-
-        details.append({
-            "experience": item["value"],
-            "context": item["context"],
-        })
-        seen_values.add(item["value"])
-
-    return primary, details
-
-
-# ============================================================
-# LICENSES
-# ============================================================
 
 def extract_licenses(text):
-    if not text:
-        return []
-
-    lowered = text.lower()
+    value = normalize_space(text).lower()
     licenses = []
-
     patterns = [
-        ("A&P", ["a&p", "airframe and powerplant"]),
-        ("Driver's license", [
-            "driver's license", "drivers license",
-            "valid driver's license", "valid drivers license",
-        ]),
-        ("FAA certification", ["faa certification", "faa license"]),
-        ("CPA", ["cpa license", "certified public accountant"]),
-        ("PMP", ["pmp certification", "project management professional"]),
+        (r"\ba&p\b|airframe and powerplant", "A&P license"),
+        (r"\bfaa\b.{0,30}\b(certificate|license|licence)\b", "FAA certificate/license"),
+        (r"\b(cdl|commercial driver'?s license)\b", "Commercial driver's license (CDL)"),
+        (r"\b(valid driver'?s license|driver'?s license required)\b", "Driver's license"),
+        (r"\b(rn license|registered nurse license|licensed registered nurse)\b", "Registered Nurse license"),
+        (r"\b(cpa license|certified public accountant)\b", "CPA license"),
+        (r"\b(epa 608|epa certification)\b", "EPA certification"),
+        (r"\b(osha 10|osha 30)\b", "OSHA certification"),
+        (r"\b(license|licence|certification|certified)\b", "Other license/certification (details in description)"),
     ]
-
-    for name, keywords in patterns:
-        if any(keyword in lowered for keyword in keywords):
-            licenses.append(name)
-
+    for pattern, label in patterns:
+        if re.search(pattern, value) and label not in licenses:
+            licenses.append(label)
     return licenses
 
 
-# ============================================================
-# REQUIREMENTS
-# ============================================================
-
-def extract_requirements(text):
-    experience, experience_details = extract_experience(text)
-
-    return {
-        "education": extract_education(text),
-        "experience": experience,
-        "experience_details": experience_details,
-        "licenses": extract_licenses(text),
-    }
-
-
-# ============================================================
-# DATES
-# ============================================================
-
 def parse_date_value(value):
-    if value is None:
+    if value is None or value == "":
         return None
 
-    if isinstance(value, datetime):
-        dt = value
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+    if isinstance(value, (int, float)):
+        try:
+            timestamp = float(value)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+        except (ValueError, OSError, OverflowError):
+            return None
 
-    value = str(value).strip()
-    if not value:
+    raw = normalize_space(value)
+    if not raw:
         return None
 
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.isoformat()
+        return dt.astimezone(timezone.utc).isoformat()
     except ValueError:
         pass
 
     formats = [
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%m/%d/%Y",
-        "%d/%m/%Y",
-        "%b %d, %Y",
-        "%B %d, %Y",
-        "%d %b %Y",
-        "%d %B %Y",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d/%m/%Y",
+        "%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y",
+        "%Y/%m/%d", "%Y.%m.%d"
     ]
-
-    for date_format in formats:
+    for fmt in formats:
         try:
-            dt = datetime.strptime(value, date_format)
-            dt = dt.replace(tzinfo=timezone.utc)
-            return dt.isoformat()
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc).isoformat()
         except ValueError:
             continue
-
     return None
 
 
 def extract_dates(job):
-    """
-    Busca fechas habituales de publicación en registros de empleo.
-    Devuelve una fecha normalizada o None si no hay una fecha válida.
-    """
+    """Only use publication/creation fields; don't mistake update dates for posting dates."""
     if not isinstance(job, dict):
         return None
 
-    for key in (
-        "posted_date",
-        "first_published",
-        "published_at",
-        "publishedAt",
-        "updated_at",
-        "updatedAt",
-        "created_at",
-        "createdAt",
-        "date_posted",
-        "datePosted",
-    ):
-        value = job.get(key)
-        parsed = parse_date_value(value)
-        if parsed:
-            return parsed
-
+    fields = (
+        "posted_date", "postedDate", "first_published", "firstPublished",
+        "published_at", "publishedAt", "date_posted", "datePosted",
+        "releasedDate", "releasedDateTime", "created_at", "createdAt"
+    )
+    for field in fields:
+        value = job.get(field)
+        if value is not None:
+            parsed = parse_date_value(value)
+            if parsed:
+                return parsed
     return None
 
 
-# ============================================================
-# SOURCE
-# ============================================================
-
 def build_source(job, board=None, company=None):
-    job = job or {}
+    if not isinstance(job, dict):
+        job = {}
 
-    url = (
-        job.get("absolute_url")
-        or job.get("url")
-        or job.get("apply_url")
-        or job.get("application_url")
-        or ""
+    source = job.get("source")
+    result = dict(source) if isinstance(source, dict) else {}
+    result.setdefault("board", board or job.get("board") or job.get("board_token"))
+    result.setdefault("company", company or job.get("company") or job.get("companyName"))
+    result.setdefault(
+        "url",
+        job.get("absolute_url") or job.get("hostedUrl") or
+        job.get("jobUrl") or job.get("url")
     )
+    return result
 
-    source_board = board or job.get("board") or "Unknown"
-    source_company = (
-        company
-        or job.get("company")
-        or job.get("company_name")
-        or job.get("organization")
-        or ""
-    )
-
-    return {
-        "board": source_board,
-        "company": source_company,
-        "url": url,
-    }
-
-
-# ============================================================
-# GREENHOUSE NORMALIZER
-# ============================================================
 
 def normalize_greenhouse_job(job, company=None, board="greenhouse"):
     """
-    Convierte una vacante Greenhouse en el formato normalizado
-    que usa PR Intelligence Agent.
+    Normalize a Greenhouse-style job and preserve the fields expected by app.py.
     """
     if not isinstance(job, dict):
-        return None
+        job = {}
 
-    title = normalize_space(
-        job.get("title") or job.get("name") or job.get("job_title")
-    )
-
-    content = get_job_content(job)
+    title = normalize_space(job.get("title") or job.get("name") or job.get("jobTitle"))
+    description = get_job_content(job)
     location = extract_location(job)
 
-    departments = job.get("departments") or []
-    department_names = []
-
+    departments = job.get("departments") or job.get("department") or job.get("team") or []
     if isinstance(departments, list):
-        for department in departments:
-            if isinstance(department, dict) and department.get("name"):
-                department_names.append(str(department["name"]))
-            elif isinstance(department, str):
-                department_names.append(department)
-
-    department = ", ".join(department_names) or job.get("department") or ""
-
-    normalized_for_industry = dict(job)
-    normalized_for_industry["department"] = department
-
-    salary = extract_salary(
-        " ".join(
-            str(value)
-            for value in (
-                job.get("salary"),
-                job.get("salary_range"),
-                job.get("compensation"),
-                content,
-            )
-            if value
+        department = ", ".join(
+            normalize_space(item.get("name") if isinstance(item, dict) else item)
+            for item in departments
+            if normalize_space(item.get("name") if isinstance(item, dict) else item)
         )
+    elif isinstance(departments, dict):
+        department = normalize_space(departments.get("name"))
+    else:
+        department = normalize_space(departments)
+
+    salary = _salary_from_job_fields(job)
+    if salary is None:
+        salary_text = " ".join(
+            normalize_space(job.get(key))
+            for key in ("salary", "salary_range", "salaryRange", "compensation", "payRange")
+            if isinstance(job.get(key), str)
+        )
+        salary = extract_salary(salary_text or description)
+
+    posted_date = extract_dates(job)
+
+    employment_type = normalize_space(
+        job.get("employment_type") or job.get("employmentType") or
+        job.get("typeOfEmployment") or job.get("commitment")
+    ) or extract_employment_type(" ".join([title, description]))
+
+    employment_map = {
+        "fulltime": "Full-time", "full time": "Full-time",
+        "parttime": "Part-time", "part time": "Part-time",
+        "intern": "Internship", "internship": "Internship",
+        "temporary": "Temporary", "temp": "Temporary",
+        "contract": "Contract"
+    }
+    employment_type = employment_map.get(employment_type.lower(), employment_type or "Unknown")
+
+    mode_source = " ".join([
+        title,
+        normalize_space(job.get("work_mode") or job.get("workMode") or job.get("workplaceType")),
+        location.get("raw") or "",
+        description[:5000]
+    ])
+    work_mode = normalize_space(
+        job.get("work_mode") or job.get("workMode") or job.get("workplaceType")
+    )
+    if work_mode.lower() in {"remote", "hybrid", "on-site", "onsite", "on site"}:
+        mode_map = {"onsite": "On-site", "on site": "On-site"}
+        work_mode = mode_map.get(work_mode.lower(), work_mode.title() if work_mode.lower() != "on-site" else "On-site")
+    else:
+        work_mode = extract_work_mode(mode_source)
+
+    source_url = (
+        job.get("absolute_url") or job.get("hostedUrl") or job.get("applyUrl") or
+        job.get("jobUrl") or job.get("url") or job.get("ref")
+    )
+    job_id = (
+        job.get("job_id") or job.get("id") or job.get("requisition_id") or
+        job.get("requisitionId") or job.get("external_id")
+    )
+    if job_id is None or normalize_space(job_id) == "":
+        job_id = source_url or f"{board}-{title or 'unknown-job'}"
+
+    actual_company = (
+        job.get("companyName") or job.get("company_name") or
+        (job.get("company") if isinstance(job.get("company"), str) else None) or
+        company
     )
 
-    raw_id = job.get("id") or job.get("job_id") or job.get("requisition_id")
-    job_id = str(raw_id) if raw_id is not None else ""
+    source = build_source(job, board=board, company=actual_company)
+    if source_url:
+        source["url"] = source_url
+    source["board"] = source.get("board") or board
+    source["company"] = source.get("company") or actual_company
 
-    source = build_source(job, board=board, company=company)
+    content = " ".join([title, description])
+    experience = extract_experience(content)
 
     return {
-        "job_id": job_id,
-        "title": title or "Untitled position",
-        "company": source["company"],
-        "board": source["board"],
+        "job_id": str(job_id),
+        "title": title or "Unknown",
+        "company": actual_company or "Unknown",
+        "board": board,
         "location": location,
         "salary": salary,
-        "posted_date": extract_dates(job),
-        "industry": extract_industry(content, normalized_for_industry),
-        "work_mode": extract_work_mode(
-            " ".join([title or "", location.get("raw") or "", content])
+        "posted_date": posted_date,
+        "industry": extract_industry(
+            description,
+            job={**job, "title": title, "department": department}
         ),
-        "employment_type": extract_employment_type(content),
-        "requirements": extract_requirements(content),
-        "eligibility": extract_eligibility(content),
-        "description": content,
+        "work_mode": work_mode or "Unknown",
+        "employment_type": employment_type or "Unknown",
+        "requirements": {
+            "education": extract_education(content),
+            "experience": experience,
+            "licenses": extract_licenses(content)
+        },
+        "eligibility": extract_eligibility(description),
+        "description": description,
         "source": source,
-        "url": source["url"],
-        "department": department,
+        "url": source_url,
+        "department": department
     }
