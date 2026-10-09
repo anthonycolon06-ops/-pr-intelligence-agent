@@ -31,14 +31,19 @@ US_STATES = {
 }
 
 STATE_CODE_TO_NAME = {
-    code.lower(): name
-    for name, code in US_STATES.items()
+    code.lower(): name for name, code in US_STATES.items()
 }
 
 
 # ============================================================
-# GREENHOUSE CONTENT
+# GENERAL HELPERS
 # ============================================================
+
+def normalize_space(value):
+    if value is None:
+        return None
+    return re.sub(r"\s+", " ", str(value)).strip()
+
 
 def decode_greenhouse_content(content):
     if not content:
@@ -49,10 +54,12 @@ def decode_greenhouse_content(content):
     for _ in range(4):
         decoded = html.unescape(decoded)
 
-    decoded = decoded.replace("\\u0026", "&")
-    decoded = decoded.replace("\\u003c", "<")
-    decoded = decoded.replace("\\u003e", ">")
-    decoded = decoded.replace("\\/", "/")
+    decoded = (
+        decoded.replace("\\u0026", "&")
+        .replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\/", "/")
+    )
 
     return decoded
 
@@ -67,8 +74,7 @@ def html_to_text(content):
     text = re.sub(r"</div\s*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"</li\s*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
-    text = html.unescape(text)
-    text = text.replace("\xa0", " ")
+    text = html.unescape(text).replace("\xa0", " ")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text)
 
@@ -76,28 +82,8 @@ def html_to_text(content):
 
 
 def get_job_content(job):
-    content = job.get("content")
-
-    if content:
-        return html_to_text(content)
-
-    description = job.get("description")
-
-    if description:
-        return html_to_text(description)
-
-    return ""
-
-
-# ============================================================
-# GENERAL HELPERS
-# ============================================================
-
-def normalize_space(value):
-    if value is None:
-        return None
-
-    return re.sub(r"\s+", " ", str(value)).strip()
+    content = job.get("content") or job.get("description") or ""
+    return html_to_text(content)
 
 
 # ============================================================
@@ -105,11 +91,6 @@ def normalize_space(value):
 # ============================================================
 
 def extract_location(job):
-    """
-    Normaliza la ubicación sin asumir que una ubicación
-    desconocida pertenece a Estados Unidos.
-    """
-
     location = job.get("location")
     raw = ""
     country_hint = ""
@@ -117,22 +98,18 @@ def extract_location(job):
     if isinstance(location, dict):
         raw = location.get("name") or location.get("raw") or ""
         country_hint = str(location.get("country") or "").strip()
-
     elif isinstance(location, str):
         raw = location
 
     if not raw:
         offices = job.get("offices", [])
-
         if isinstance(offices, list):
             names = [
                 str(office["name"])
                 for office in offices
                 if isinstance(office, dict) and office.get("name")
             ]
-
-            if names:
-                raw = ", ".join(names)
+            raw = ", ".join(names)
 
     raw = normalize_space(raw) or ""
     lowered = raw.lower()
@@ -142,7 +119,6 @@ def extract_location(job):
     region = None
     municipality = raw or None
 
-    # Puerto Rico
     if (
         "puerto rico" in lowered
         or hint in {"pr", "pri", "puerto rico"}
@@ -190,13 +166,11 @@ def extract_location(job):
 
         if country is None and state_match:
             state_code = state_match.group(2).upper()
-
             if state_code in state_codes:
                 country = "US"
                 region = state_code
                 municipality = state_match.group(1).strip()
 
-        # Remote explícitamente limitado a Estados Unidos
         if country is None and re.fullmatch(
             r"(?:United States|USA|U\.S\.A\.?)"
             r"\s*(?:\(\s*Remote\s*\))?",
@@ -215,32 +189,17 @@ def extract_location(job):
             municipality = "United States (Remote)"
 
         countries = {
-            "india": "IN",
-            "poland": "PL",
-            "canada": "CA",
-            "united kingdom": "GB",
-            "england": "GB",
-            "ireland": "IE",
-            "australia": "AU",
-            "new zealand": "NZ",
-            "germany": "DE",
-            "france": "FR",
-            "spain": "ES",
-            "italy": "IT",
-            "portugal": "PT",
-            "netherlands": "NL",
-            "brazil": "BR",
-            "mexico": "MX",
-            "philippines": "PH",
-            "singapore": "SG",
-            "japan": "JP",
-            "china": "CN",
-            "israel": "IL",
-            "united arab emirates": "AE",
-            "south africa": "ZA",
-            "colombia": "CO",
-            "argentina": "AR",
-            "chile": "CL",
+            "india": "IN", "poland": "PL", "canada": "CA",
+            "united kingdom": "GB", "england": "GB",
+            "ireland": "IE", "australia": "AU",
+            "new zealand": "NZ", "germany": "DE",
+            "france": "FR", "spain": "ES", "italy": "IT",
+            "portugal": "PT", "netherlands": "NL",
+            "brazil": "BR", "mexico": "MX",
+            "philippines": "PH", "singapore": "SG",
+            "japan": "JP", "china": "CN", "israel": "IL",
+            "united arab emirates": "AE", "south africa": "ZA",
+            "colombia": "CO", "argentina": "AR", "chile": "CL",
         }
 
         country_codes = {
@@ -256,7 +215,9 @@ def extract_location(job):
             if hint in country_codes:
                 country = country_codes[hint]
             else:
-                for country_name in sorted(countries, key=len, reverse=True):
+                for country_name in sorted(
+                    countries, key=len, reverse=True
+                ):
                     if re.search(
                         r"\b" + re.escape(country_name) + r"\b",
                         lowered,
@@ -270,7 +231,6 @@ def extract_location(job):
                     for part in raw.split(",")
                     if part.strip()
                 ]
-
                 if parts and parts[-1].lower() in countries:
                     municipality = ", ".join(parts[:-1]) or raw
 
@@ -287,17 +247,7 @@ def extract_location(job):
 # ============================================================
 
 def extract_eligibility(text):
-    """
-    Detecta restricciones explícitas de elegibilidad geográfica.
-    No confunde el lugar donde se puede contratar con la ubicación
-    física del empleo.
-    """
-
-    empty = {
-        "countries": [],
-        "states": [],
-        "territories": [],
-    }
+    empty = {"countries": [], "states": [], "territories": []}
 
     if not text:
         return empty
@@ -305,21 +255,16 @@ def extract_eligibility(text):
     normalized = normalize_space(text)
     lowered = normalized.lower()
 
-    eligibility_markers = [
-        "eligible hiring locations",
-        "eligible locations",
-        "eligible to work",
-        "eligible candidates",
-        "can hire",
-        "can hire full-time residents",
-        "residents of the following",
-        "hiring locations",
-        "locations where we can hire",
+    markers = [
+        "eligible hiring locations", "eligible locations",
+        "eligible to work", "eligible candidates", "can hire",
+        "can hire full-time residents", "residents of the following",
+        "hiring locations", "locations where we can hire",
     ]
 
     positions = [
         lowered.find(marker)
-        for marker in eligibility_markers
+        for marker in markers
         if lowered.find(marker) >= 0
     ]
 
@@ -329,17 +274,13 @@ def extract_eligibility(text):
     eligibility_text = normalized[min(positions):]
 
     stop_patterns = [
-        r"\bCalifornia Residents:",
-        r"\bBenefits\b",
-        r"\bIndividual pay\b",
-        r"\bStarting pay range\b",
-        r"\bEqual Opportunity Employer\b",
-        r"\bAbout Bold\b",
+        r"\bCalifornia Residents:", r"\bBenefits\b",
+        r"\bIndividual pay\b", r"\bStarting pay range\b",
+        r"\bEqual Opportunity Employer\b", r"\bAbout Bold\b",
         r"\b#LI-",
     ]
 
     stop_positions = []
-
     for pattern in stop_patterns:
         match = re.search(pattern, eligibility_text, re.IGNORECASE)
         if match:
@@ -365,9 +306,9 @@ def extract_eligibility(text):
             + r"(?![A-Za-z])",
             lowered_eligibility,
         ):
-            code_upper = state_code.upper()
-            if code_upper not in states_found:
-                states_found.append(code_upper)
+            code = state_code.upper()
+            if code not in states_found:
+                states_found.append(code)
 
     if re.search(r"\bpuerto rico\b", lowered_eligibility):
         territories_found.append("PR")
@@ -417,12 +358,8 @@ def normalize_salary_period(period):
 
     if period in {"hour", "hours", "hr", "hourly"}:
         return "hour"
-
-    if period in {
-        "year", "years", "annual", "annually", "yearly"
-    }:
+    if period in {"year", "years", "annual", "annually", "yearly"}:
         return "year"
-
     if period in {"month", "months", "monthly"}:
         return "month"
 
@@ -430,20 +367,6 @@ def normalize_salary_period(period):
 
 
 def extract_salary(text):
-    """
-    Extrae rangos salariales y cantidades individuales.
-
-    Ejemplos:
-      $16 - $20 per hour
-      $80,000 to $95,000
-      USD 50,000 - USD 70,000 annually
-      $100k - $150k
-      $1.2m - $1.5m
-
-    No supone que un salario sea anual u horario si la fuente
-    no especifica el período.
-    """
-
     empty = {
         "currency": "USD",
         "max": None,
@@ -456,16 +379,12 @@ def extract_salary(text):
         return empty
 
     normalized = (
-        str(text)
-        .replace("–", "-")
-        .replace("—", "-")
-        .replace("−", "-")
+        str(text).replace("–", "-")
+        .replace("—", "-").replace("−", "-")
     )
 
-    # Permite comas, decimales y sufijos k/m.
     amount = r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kKmM])?"
 
-    # El grupo del período se conserva incluso cuando es opcional.
     period_pattern = (
         r"(?:\s*(?:per|/)\s*)?"
         r"(hourly|hour|hr|hours|yearly|annual|annually|year|years|"
@@ -473,12 +392,13 @@ def extract_salary(text):
         r"(?:\s+rate|\s+salary)?"
     )
 
+    optional_period = r"(?:" + period_pattern + r")?"
+
     def parse_amount(number_text, suffix):
         value = float(number_text.replace(",", ""))
 
         if suffix:
             suffix = suffix.lower()
-
             if suffix == "k":
                 value *= 1000
             elif suffix == "m":
@@ -486,11 +406,6 @@ def extract_salary(text):
 
         return value
 
-    # El envoltorio opcional permite que el período esté ausente,
-    # sin alterar los índices de los grupos capturados.
-    optional_period = r"(?:" + period_pattern + r")?"
-
-    # Rangos con símbolo $, USD opcional y sufijos k/m.
     range_patterns = [
         re.compile(
             r"\$\s*" + amount
@@ -508,7 +423,6 @@ def extract_salary(text):
 
     for pattern in range_patterns:
         match = pattern.search(normalized)
-
         if not match:
             continue
 
@@ -527,21 +441,13 @@ def extract_salary(text):
             "published": True,
         }
 
-    # Cantidad única. Solo se usa cuando no hay un rango.
     single_patterns = [
-        re.compile(
-            r"\$\s*" + amount + optional_period,
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\bUSD\s*" + amount + optional_period,
-            re.IGNORECASE,
-        ),
+        re.compile(r"\$\s*" + amount + optional_period, re.IGNORECASE),
+        re.compile(r"\bUSD\s*" + amount + optional_period, re.IGNORECASE),
     ]
 
     for pattern in single_patterns:
         match = pattern.search(normalized)
-
         if not match:
             continue
 
@@ -571,22 +477,18 @@ def extract_employment_type(text):
 
     if re.search(r"\bfull[- ]time\b", lowered):
         return "Full-time"
-
     if re.search(r"\bpart[- ]time\b", lowered):
         return "Part-time"
-
     if re.search(
         r"\binternship\b|\bintern position\b|\bintern role\b",
         lowered,
     ):
         return "Internship"
-
     if re.search(
         r"\btemporary position\b|\btemporary role\b|\btemporary job\b",
         lowered,
     ):
         return "Temporary"
-
     if re.search(
         r"\bcontract position\b|\bcontract role\b|\bcontractor position\b",
         lowered,
@@ -601,8 +503,9 @@ def extract_employment_type(text):
 # ============================================================
 
 def extract_industry(text, job=None):
-    title = str((job or {}).get("title") or "").lower()
-    department = str((job or {}).get("department") or "").lower()
+    job = job or {}
+    title = str(job.get("title") or "").lower()
+    department = str(job.get("department") or "").lower()
     content = (text or "").lower()
 
     technology_terms = [
@@ -723,11 +626,7 @@ def extract_industry(text, job=None):
         "cloud infrastructure", "devops",
     ]
 
-    score = sum(
-        1 for term in strong_technology_content if term in content
-    )
-
-    if score >= 2:
+    if sum(1 for term in strong_technology_content if term in content) >= 2:
         return "Technology"
 
     return "Other"
@@ -738,12 +637,6 @@ def extract_industry(text, job=None):
 # ============================================================
 
 def extract_work_mode(text):
-    """
-    Clasifica la modalidad usando señales explícitas.
-    Evita detectar Remote solo porque se menciona un equipo remoto.
-    Una indicación inequívoca de 100% presencial tiene prioridad.
-    """
-
     if not text:
         return "Unknown"
 
@@ -759,23 +652,14 @@ def extract_work_mode(text):
         r"\bwork\s+must\s+be\s+performed\s+on[- ]?site\b",
     ]
 
-    if any(
-        re.search(pattern, lowered)
-        for pattern in onsite_explicit_patterns
-    ):
+    if any(re.search(pattern, lowered) for pattern in onsite_explicit_patterns):
         return "On-site"
 
-    hybrid_patterns = [
-        r"\bhybrid\s+(?:work|schedule|role|position|model|arrangement)\b",
-        r"\bhybrid[- ]work\b",
-        r"\bhybrid\s+workplace\b",
-        r"\bthis\s+is\s+a\s+hybrid\b",
-        r"\bhybrid\b",
-    ]
-
-    if any(
-        re.search(pattern, lowered)
-        for pattern in hybrid_patterns
+    if re.search(
+        r"\bhybrid\s+(?:work|schedule|role|position|model|arrangement)\b"
+        r"|\bhybrid[- ]work\b|\bhybrid\s+workplace\b"
+        r"|\bthis\s+is\s+a\s+hybrid\b|\bhybrid\b",
+        lowered,
     ):
         return "Hybrid"
 
@@ -792,26 +676,18 @@ def extract_work_mode(text):
         r"\bremote\s+eligible\b",
     ]
 
-    if any(
-        re.search(pattern, lowered)
-        for pattern in remote_patterns
-    ):
+    if any(re.search(pattern, lowered) for pattern in remote_patterns):
         return "Remote"
 
     onsite_patterns = [
-        r"\bon[- ]?site\b",
-        r"\bonsite\b",
+        r"\bon[- ]?site\b", r"\bonsite\b",
         r"\bin[- ]person\s+at\s+(?:our|the)\s+office\b",
-        r"\boffice[- ]based\b",
-        r"\bin[- ]office\s+(?:role|position|work)\b",
+        r"\boffice[- ]based\b", r"\bin[- ]office\s+(?:role|position|work)\b",
         r"\bwork\s+from\s+(?:our|the)\s+office\b",
         r"\bmust\s+be\s+present\s+at\s+the\s+office\b",
     ]
 
-    if any(
-        re.search(pattern, lowered)
-        for pattern in onsite_patterns
-    ):
+    if any(re.search(pattern, lowered) for pattern in onsite_patterns):
         return "On-site"
 
     return "Unknown"
@@ -828,33 +704,19 @@ def extract_education(text):
     lowered = text.lower()
     education = []
 
-    if re.search(
-        r"\bhigh school\b|\bhigh-school\b|\bsecondary school\b",
-        lowered,
-    ):
+    if re.search(r"\bhigh school\b|\bhigh-school\b|\bsecondary school\b", lowered):
         education.append("High school")
-
-    if re.search(
-        r"\bassociate'?s?\b|\bassociates degree\b",
-        lowered,
-    ):
+    if re.search(r"\bassociate'?s?\b|\bassociates degree\b", lowered):
         education.append("Associate degree")
-
     if re.search(
         r"\bundergraduate degree\b|\bbachelor'?s?\b|\bbachelor degree\b",
         lowered,
     ):
         education.append("Bachelor's degree")
-
-    if re.search(
-        r"\bmaster'?s?\b|\bmaster degree\b",
-        lowered,
-    ):
+    if re.search(r"\bmaster'?s?\b|\bmaster degree\b", lowered):
         education.append("Master's degree")
-
     if re.search(r"\bph\.?d\.?\b|\bdoctorate\b", lowered):
         education.append("Doctorate")
-
     if re.search(r"\btechnical degree\b|\btechnical diploma\b", lowered):
         education.append("Technical degree")
 
@@ -876,7 +738,6 @@ def extract_experience(text):
     )
 
     matches = []
-
     patterns = [
         re.compile(r"\b(\d+)\s*-\s*(\d+)\s+years?\b", re.IGNORECASE),
         re.compile(r"\b(\d+)\s*\+\s*years?\b", re.IGNORECASE),
@@ -910,7 +771,6 @@ def extract_experience(text):
 
     for item in sorted(matches, key=lambda x: x["start"]):
         key = (item["start"], item["value"])
-
         if key not in seen:
             unique.append(item)
             seen.add(key)
@@ -951,9 +811,7 @@ def extract_licenses(text):
         ]),
         ("FAA certification", ["faa certification", "faa license"]),
         ("CPA", ["cpa license", "certified public accountant"]),
-        ("PMP", [
-            "pmp certification", "project management professional",
-        ]),
+        ("PMP", ["pmp certification", "project management professional"]),
     ]
 
     for name, keywords in patterns:
@@ -988,27 +846,176 @@ def parse_date_value(value):
 
     if isinstance(value, datetime):
         dt = value
-
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-
         return dt.isoformat()
 
     value = str(value).strip()
-
     if not value:
         return None
 
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-
         return dt.isoformat()
-
     except ValueError:
         pass
 
-    for date_format in [
-        "%Y-%m-%d", "%
+    formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+    ]
+
+    for date_format in formats:
+        try:
+            dt = datetime.strptime(value, date_format)
+            dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except ValueError:
+            continue
+
+    return None
+
+
+def extract_dates(job):
+    """
+    Busca fechas habituales de publicación en registros de empleo.
+    Devuelve una fecha normalizada o None si no hay una fecha válida.
+    """
+    if not isinstance(job, dict):
+        return None
+
+    for key in (
+        "posted_date",
+        "first_published",
+        "published_at",
+        "publishedAt",
+        "updated_at",
+        "updatedAt",
+        "created_at",
+        "createdAt",
+        "date_posted",
+        "datePosted",
+    ):
+        value = job.get(key)
+        parsed = parse_date_value(value)
+        if parsed:
+            return parsed
+
+    return None
+
+
+# ============================================================
+# SOURCE
+# ============================================================
+
+def build_source(job, board=None, company=None):
+    job = job or {}
+
+    url = (
+        job.get("absolute_url")
+        or job.get("url")
+        or job.get("apply_url")
+        or job.get("application_url")
+        or ""
+    )
+
+    source_board = board or job.get("board") or "Unknown"
+    source_company = (
+        company
+        or job.get("company")
+        or job.get("company_name")
+        or job.get("organization")
+        or ""
+    )
+
+    return {
+        "board": source_board,
+        "company": source_company,
+        "url": url,
+    }
+
+
+# ============================================================
+# GREENHOUSE NORMALIZER
+# ============================================================
+
+def normalize_greenhouse_job(job, company=None, board="greenhouse"):
+    """
+    Convierte una vacante Greenhouse en el formato normalizado
+    que usa PR Intelligence Agent.
+    """
+    if not isinstance(job, dict):
+        return None
+
+    title = normalize_space(
+        job.get("title") or job.get("name") or job.get("job_title")
+    )
+
+    content = get_job_content(job)
+    location = extract_location(job)
+
+    departments = job.get("departments") or []
+    department_names = []
+
+    if isinstance(departments, list):
+        for department in departments:
+            if isinstance(department, dict) and department.get("name"):
+                department_names.append(str(department["name"]))
+            elif isinstance(department, str):
+                department_names.append(department)
+
+    department = ", ".join(department_names) or job.get("department") or ""
+
+    normalized_for_industry = dict(job)
+    normalized_for_industry["department"] = department
+
+    salary = extract_salary(
+        " ".join(
+            str(value)
+            for value in (
+                job.get("salary"),
+                job.get("salary_range"),
+                job.get("compensation"),
+                content,
+            )
+            if value
+        )
+    )
+
+    raw_id = job.get("id") or job.get("job_id") or job.get("requisition_id")
+    job_id = str(raw_id) if raw_id is not None else ""
+
+    source = build_source(job, board=board, company=company)
+
+    return {
+        "job_id": job_id,
+        "title": title or "Untitled position",
+        "company": source["company"],
+        "board": source["board"],
+        "location": location,
+        "salary": salary,
+        "posted_date": extract_dates(job),
+        "industry": extract_industry(content, normalized_for_industry),
+        "work_mode": extract_work_mode(
+            " ".join([title or "", location.get("raw") or "", content])
+        ),
+        "employment_type": extract_employment_type(content),
+        "requirements": extract_requirements(content),
+        "eligibility": extract_eligibility(content),
+        "description": content,
+        "source": source,
+        "url": source["url"],
+        "department": department,
+    }
