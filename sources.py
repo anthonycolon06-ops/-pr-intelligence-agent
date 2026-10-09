@@ -1,9 +1,15 @@
 
 GREENHOUSE_BOARDS = [
+    # Bolsas existentes
     "livecareer",
+
+    # Empresas con vacantes publicadas en Puerto Rico
+    "sxseenterprisesllc",
+    "xtillion",
 ]
 
 LEVER_BOARDS = [
+    # Bolsas existentes
     "handoff",
     "distro",
     "rightsideup",
@@ -14,17 +20,25 @@ LEVER_BOARDS = [
     "goodleap",
     "entrata",
     "sandboxvr",
+
+    # Empresas con publicaciones verificables en Puerto Rico
+    "aleph",
+    "quenchwater",
+    "boxlunch",
 ]
 
-# Identificadores de bolsas públicas para comenzar la integración.
-# Se pueden ampliar a medida que validemos nuevas empresas.
 ASHBY_BOARDS = [
-    "Ashby",
+    # Empresas con vacantes publicadas en Puerto Rico
+    "glade",
+    "legionhealth",
+    "rain",
+    "wellnecity",
+    "manifest-os",
 ]
 
-SMARTRECRUITERS_BOARDS = [
-    "smartrecruiters",
-]
+# No agregar nombres genéricos: cada identificador debe
+# corresponder a una empresa con una bolsa de empleos real.
+SMARTRECRUITERS_BOARDS = []
 
 SOURCES = {
     "greenhouse": GREENHOUSE_BOARDS,
