@@ -21,23 +21,21 @@ LEVER_BOARDS = [
     "entrata",
     "sandboxvr",
 
-    # Empresas con publicaciones verificables en Puerto Rico
+    # Otras bolsas de empleo
     "aleph",
     "quenchwater",
     "boxlunch",
 ]
 
 ASHBY_BOARDS = [
-    # Empresas con vacantes publicadas en Puerto Rico
-    "glade",
+    # Bolsas de empleo
     "legionhealth",
     "rain",
     "wellnecity",
     "manifest-os",
 ]
 
-# No agregar nombres genéricos: cada identificador debe
-# corresponder a una empresa con una bolsa de empleos real.
+# No agregar identificadores genéricos o no verificados.
 SMARTRECRUITERS_BOARDS = []
 
 SOURCES = {
