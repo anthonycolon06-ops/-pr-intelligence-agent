@@ -2,15 +2,32 @@
 from flask import Flask, request, jsonify
 import json
 import os
+import time
+import threading
 
 from greenhouse import get_greenhouse_jobs
 from normalizer import normalize_greenhouse_job
 from lever import get_lever_jobs
-from sources import GREENHOUSE_BOARDS, LEVER_BOARDS
+from ashby import get_ashby_jobs
+from smartrecruiters import get_smartrecruiters_jobs
+from sources import (
+    GREENHOUSE_BOARDS,
+    LEVER_BOARDS,
+    ASHBY_BOARDS,
+    SMARTRECRUITERS_BOARDS,
+)
 
 app = Flask(__name__)
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
+CACHE_SECONDS = 300
+
+_cache = {
+    "jobs": [],
+    "sources": [],
+    "timestamp": 0,
+}
+_cache_lock = threading.Lock()
 
 US_STATES = {
     "alabama": "AL", "alaska": "AK", "arizona": "AZ",
@@ -66,59 +83,54 @@ def normalize_greenhouse_board(board):
             if item:
                 normalized.append(item)
         except Exception as error:
-            print(f"Could not normalize Greenhouse job: {error}")
+            print(f"Greenhouse normalization failed: {error}")
 
     return normalized
 
 
-def load_all_jobs():
+def source_result(source_name, board, getter):
+    try:
+        jobs = getter(board)
+        return jobs, {
+            "source": source_name,
+            "board": board,
+            "status": "ok",
+            "count": len(jobs),
+        }
+    except Exception as error:
+        print(f"{source_name} board {board} failed: {error}")
+        return [], {
+            "source": source_name,
+            "board": board,
+            "status": "error",
+            "error": str(error)[:300],
+            "count": 0,
+        }
+
+
+def fetch_all_jobs():
     combined = []
-    source_status = []
+    statuses = []
 
-    for board in GREENHOUSE_BOARDS:
-        try:
-            jobs = normalize_greenhouse_board(board)
+    source_groups = [
+        ("Greenhouse", GREENHOUSE_BOARDS, normalize_greenhouse_board),
+        ("Lever", LEVER_BOARDS, get_lever_jobs),
+        ("Ashby", ASHBY_BOARDS, get_ashby_jobs),
+        (
+            "SmartRecruiters",
+            SMARTRECRUITERS_BOARDS,
+            get_smartrecruiters_jobs,
+        ),
+    ]
+
+    for source_name, boards, getter in source_groups:
+        for board in boards:
+            jobs, status = source_result(source_name, board, getter)
             combined.extend(jobs)
-            source_status.append({
-                "source": "Greenhouse",
-                "board": board,
-                "status": "ok",
-                "count": len(jobs),
-            })
-        except Exception as error:
-            print(f"Greenhouse board {board} failed: {error}")
-            source_status.append({
-                "source": "Greenhouse",
-                "board": board,
-                "status": "error",
-                "error": str(error),
-                "count": 0,
-            })
+            statuses.append(status)
 
-    for board in LEVER_BOARDS:
-        try:
-            jobs = get_lever_jobs(board)
-            combined.extend(jobs)
-            source_status.append({
-                "source": "Lever",
-                "board": board,
-                "status": "ok",
-                "count": len(jobs),
-            })
-        except Exception as error:
-            print(f"Lever board {board} failed: {error}")
-            source_status.append({
-                "source": "Lever",
-                "board": board,
-                "status": "error",
-                "error": str(error),
-                "count": 0,
-            })
-
-    # Add saved jobs as a fallback.
     combined.extend(load_jobs())
 
-    # Deduplicate by source job ID. Keep the first occurrence.
     unique_jobs = []
     seen_ids = set()
 
@@ -127,7 +139,6 @@ def load_all_jobs():
             continue
 
         job_id = job.get("job_id")
-
         if job_id:
             key = str(job_id).strip().lower()
             if key in seen_ids:
@@ -136,7 +147,28 @@ def load_all_jobs():
 
         unique_jobs.append(job)
 
-    return unique_jobs, source_status
+    return unique_jobs, statuses
+
+
+def load_all_jobs(force_refresh=False):
+    now = time.time()
+
+    with _cache_lock:
+        cache_is_valid = (
+            _cache["timestamp"] > 0
+            and now - _cache["timestamp"] < CACHE_SECONDS
+        )
+
+        if cache_is_valid and not force_refresh:
+            return _cache["jobs"], _cache["sources"]
+
+        jobs, statuses = fetch_all_jobs()
+
+        _cache["jobs"] = jobs
+        _cache["sources"] = statuses
+        _cache["timestamp"] = time.time()
+
+        return jobs, statuses
 
 
 def location_matches(job, requested_location):
@@ -150,16 +182,14 @@ def location_matches(job, requested_location):
     if not isinstance(location, dict):
         return query in str(location).lower()
 
-    municipality = str(location.get("municipality") or "").strip().lower()
-    region = str(location.get("region") or "").strip().lower()
-    country = str(location.get("country") or "").strip().lower()
-    raw = str(location.get("raw") or "").strip().lower()
+    municipality = str(location.get("municipality") or "").lower()
+    region = str(location.get("region") or "").lower()
+    country = str(location.get("country") or "").lower()
+    raw = str(location.get("raw") or "").lower()
+    location_text = " ".join(
+        [municipality, region, country, raw]
+    )
 
-    location_text = " ".join([
-        municipality, region, country, raw
-    ])
-
-    # Puerto Rico means jobs physically located in Puerto Rico.
     if query in {"puerto rico", "puerto-rico", "pr"}:
         return (
             country == "pr"
@@ -167,19 +197,16 @@ def location_matches(job, requested_location):
             or "puerto rico" in location_text
         )
 
-    # United States means US-located jobs, including state locations.
     if query in {
         "united states", "united states of america",
-        "usa", "us", "u.s.", "u.s.a."
+        "usa", "us", "u.s.", "u.s.a.",
     }:
         return (
             country in {"us", "usa", "united states"}
             or "united states" in location_text
-            or "united states" in raw
             or "usa" in location_text
         )
 
-    # State name and abbreviation are interchangeable.
     state_code = US_STATES.get(query)
 
     if not state_code and query in STATE_NAMES:
@@ -187,18 +214,15 @@ def location_matches(job, requested_location):
 
     if state_code:
         state_name = STATE_NAMES.get(state_code.lower(), "").lower()
+        raw_tokens = raw.replace(",", " ").split()
 
         return (
             region == state_code.lower()
             or region == state_name
             or state_name in location_text
-            or any(
-                token == state_code.lower()
-                for token in raw.replace(",", " ").split()
-            )
+            or state_code.lower() in raw_tokens
         )
 
-    # City, state searches, e.g. "Austin, Texas" or "Austin, TX".
     if "," in query:
         parts = [part.strip() for part in query.split(",") if part.strip()]
 
@@ -210,15 +234,21 @@ def location_matches(job, requested_location):
             if not requested_code and state_query in STATE_NAMES:
                 requested_code = state_query.upper()
 
-            city_matches = city_query in municipality or city_query in raw
+            city_matches = (
+                city_query in municipality or city_query in raw
+            )
 
             if requested_code:
+                state_name = STATE_NAMES.get(
+                    requested_code.lower(), ""
+                ).lower()
+
                 state_matches = (
                     region == requested_code.lower()
                     or requested_code.lower() in raw.split()
-                    or STATE_NAMES.get(requested_code.lower(), "").lower()
-                    in location_text
+                    or state_name in location_text
                 )
+
                 return city_matches and state_matches
 
     return query in location_text
@@ -230,9 +260,8 @@ def salary_value(job, key):
     if not isinstance(salary, dict):
         return None
 
-    value = salary.get(key)
-
     try:
+        value = salary.get(key)
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
@@ -271,19 +300,15 @@ def filter_jobs(
     if min_salary is not None:
         results = [
             job for job in results
-            if (
-                salary_value(job, "max") is not None
-                and salary_value(job, "max") >= min_salary
-            )
+            if salary_value(job, "max") is not None
+            and salary_value(job, "max") >= min_salary
         ]
 
     if max_salary is not None:
         results = [
             job for job in results
-            if (
-                salary_value(job, "min") is not None
-                and salary_value(job, "min") <= max_salary
-            )
+            if salary_value(job, "min") is not None
+            and salary_value(job, "min") <= max_salary
         ]
 
     return results
@@ -295,11 +320,12 @@ def home():
         "agent": "PR Intelligence Agent",
         "status": "online",
         "version": VERSION,
-        "description": (
-            "Employment intelligence API with multi-source job ingestion"
-        ),
+        "description": "Multi-source employment intelligence API",
         "coverage": ["Puerto Rico", "United States"],
-        "sources": ["Greenhouse", "Lever", "jobs.json"],
+        "sources": [
+            "Greenhouse", "Lever", "Ashby",
+            "SmartRecruiters", "jobs.json",
+        ],
         "endpoints": [
             "/jobs",
             "/sources-test",
@@ -314,8 +340,8 @@ def agent_manifest():
     return jsonify({
         "name": "PR Intelligence Agent",
         "description": (
-            "Multi-source employment intelligence service "
-            "with normalized job data and location filters."
+            "Multi-source employment intelligence with normalized "
+            "job data, source links and location filters."
         ),
         "version": VERSION,
         "capabilities": [
@@ -332,7 +358,6 @@ def agent_manifest():
             "secondary_market": "United States",
             "countries": ["Puerto Rico", "United States"],
             "industries": "multiple",
-            "salary_ranges": "all available source data",
         },
         "api": {
             "base_path": "/",
@@ -370,6 +395,7 @@ def jobs_endpoint():
     )
 
     return jsonify({
+        "version": VERSION,
         "count": len(results),
         "total_loaded": len(all_jobs),
         "filters": {
@@ -386,20 +412,24 @@ def jobs_endpoint():
 
 @app.route("/sources-test")
 def sources_test():
-    _, source_status = load_all_jobs()
+    refresh = request.args.get("refresh", "").lower() in {
+        "1", "true", "yes"
+    }
+
+    jobs, statuses = load_all_jobs(force_refresh=refresh)
 
     return jsonify({
         "version": VERSION,
-        "source_count": len(source_status),
+        "total_loaded": len(jobs),
+        "source_count": len(statuses),
         "successful_sources": sum(
-            1 for source in source_status
-            if source["status"] == "ok"
+            1 for item in statuses if item["status"] == "ok"
         ),
         "failed_sources": sum(
-            1 for source in source_status
-            if source["status"] == "error"
+            1 for item in statuses if item["status"] == "error"
         ),
-        "sources": source_status,
+        "cache_seconds": CACHE_SECONDS,
+        "sources": statuses,
     })
 
 
@@ -420,11 +450,9 @@ def greenhouse_test():
 
         for job in raw_jobs:
             try:
-                normalized = normalize_greenhouse_job(
-                    job, board, board
-                )
-                if normalized:
-                    normalized_jobs.append(normalized)
+                item = normalize_greenhouse_job(job, board, board)
+                if item:
+                    normalized_jobs.append(item)
             except Exception as error:
                 print(f"Greenhouse normalization failed: {error}")
 
