@@ -265,7 +265,11 @@ def extract_location(job):
                         break
 
             if country is not None:
-                parts = [part.strip() for part in raw.split(",") if part.strip()]
+                parts = [
+                    part.strip()
+                    for part in raw.split(",")
+                    if part.strip()
+                ]
 
                 if parts and parts[-1].lower() in countries:
                     municipality = ", ".join(parts[:-1]) or raw
@@ -411,13 +415,15 @@ def normalize_salary_period(period):
 
     period = period.lower().strip()
 
-    if period in {"hour", "hr", "hourly"}:
+    if period in {"hour", "hours", "hr", "hourly"}:
         return "hour"
 
-    if period in {"year", "annual", "annually", "yearly"}:
+    if period in {
+        "year", "years", "annual", "annually", "yearly"
+    }:
         return "year"
 
-    if period in {"month", "monthly"}:
+    if period in {"month", "months", "monthly"}:
         return "month"
 
     return "unknown"
@@ -459,6 +465,7 @@ def extract_salary(text):
     # Permite comas, decimales y sufijos k/m.
     amount = r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kKmM])?"
 
+    # El grupo del período se conserva incluso cuando es opcional.
     period_pattern = (
         r"(?:\s*(?:per|/)\s*)?"
         r"(hourly|hour|hr|hours|yearly|annual|annually|year|years|"
@@ -479,322 +486,6 @@ def extract_salary(text):
 
         return value
 
-    # Rango con símbolo $, USD opcional y sufijos k/m.
-    range_patterns = [
-        re.compile(
-            r"\$\s*" + amount
-            + r"\s*(?:-|to|through)\s*\$?\s*" + amount
-            + period_pattern + r"?",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\bUSD\s*" + amount
-            + r"\s*(?:-|to|through)\s*(?:USD\s*)?\$?\s*" + amount
-            + period_pattern + r"?",
-            re.IGNORECASE,
-        ),
-    ]
-
-    for pattern in range_patterns:
-        match = pattern.search(normalized)
-
-        if not match:
-            continue
-
-        minimum = parse_amount(match.group(1), match.group(2))
-        maximum = parse_amount(match.group(3), match.group(4))
-        period = normalize_salary_period(match.group(5))
-
-        if minimum > maximum:
-            minimum, maximum = maximum, minimum
-
-        return {
-            "currency": "USD",
-            "max": maximum,
-            "min": minimum,
-            "period": period,
-            "published": True,
-        }
-
-    # Cantidad única. Solo se usa cuando no hay un rango.
-    single_patterns = [
-        re.compile(
-            r"\$\s*" + amount + period_pattern + r"?",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\bUSD\s*" + amount + period_pattern + r"?",
-            re.IGNORECASE,
-        ),
-    ]
-
-    for pattern in single_patterns:
-        match = pattern.search(normalized)
-
-        if not match:
-            continue
-
-        value = parse_amount(match.group(1), match.group(2))
-        period = normalize_salary_period(match.group(3))
-
-        return {
-            "currency": "USD",
-            "max": value,
-            "min": value,
-            "period": period,
-            "published": True,
-        }
-
-    return empty
-
-
-# ============================================================
-# EMPLOYMENT TYPE
-# ============================================================
-
-def extract_employment_type(text):
-    if not text:
-        return "Unknown"
-
-    lowered = text.lower()
-
-    if re.search(r"\bfull[- ]time\b", lowered):
-        return "Full-time"
-
-    if re.search(r"\bpart[- ]time\b", lowered):
-        return "Part-time"
-
-    if re.search(
-        r"\binternship\b|\bintern position\b|\bintern role\b",
-        lowered,
-    ):
-        return "Internship"
-
-    if re.search(
-        r"\btemporary position\b|\btemporary role\b|\btemporary job\b",
-        lowered,
-    ):
-        return "Temporary"
-
-    if re.search(
-        r"\bcontract position\b|\bcontract role\b|\bcontractor position\b",
-        lowered,
-    ):
-        return "Contract"
-
-    return "Unknown"
-
-
-# ============================================================
-# INDUSTRY
-# ============================================================
-
-def extract_industry(text, job=None):
-    title = str((job or {}).get("title") or "").lower()
-    department = str((job or {}).get("department") or "").lower()
-    content = (text or "").lower()
-
-    technology_terms = [
-        "software", "developer", "engineer", "engineering",
-        "artificial intelligence", "machine learning",
-        "data scientist", "data engineer", "systems analyst",
-        "systems administrator", "information technology",
-        "technology", "technical", "devops", "cloud",
-        "cybersecurity", "software architect",
-    ]
-
-    if any(term in title for term in technology_terms):
-        return "Technology"
-
-    if any(
-        term in department
-        for term in ["technology", "engineering", "software", "data"]
-    ):
-        return "Technology"
-
-    design_terms = [
-        "visual designer", "graphic designer", "ui designer",
-        "ux designer", "ux/ui designer", "product designer",
-        "brand designer", "digital designer", "marketing designer",
-        "content designer", "creative designer", "web designer",
-    ]
-
-    if any(term in title for term in design_terms):
-        return "Marketing & Design"
-
-    if any(
-        term in department
-        for term in [
-            "marketing & design", "marketing and design", "creative",
-            "brand", "visual design", "graphic design", "ux/ui",
-        ]
-    ):
-        return "Marketing & Design"
-
-    categories = [
-        ("Aviation", [
-            "aviation", "aircraft", "airline", "airport", "aerospace",
-            "flight operations", "air cargo",
-        ]),
-        ("Manufacturing", [
-            "manufacturing", "production", "assembly", "fabrication",
-            "machine operator", "production operator",
-        ]),
-        ("Logistics", [
-            "logistics", "warehouse", "supply chain", "inventory",
-            "shipping", "receiving", "distribution",
-        ]),
-        ("Healthcare", [
-            "nurse", "nursing", "medical assistant", "medical technician",
-            "healthcare", "health care", "clinical", "pharmacy",
-            "pharmacist", "therapist", "physician", "doctor",
-            "radiology", "patient care",
-        ]),
-        ("Construction", [
-            "construction", "carpenter", "electrician", "plumber",
-            "welder", "concrete", "mason", "roofer",
-        ]),
-        ("Maintenance", [
-            "maintenance", "mechanic", "industrial technician",
-            "equipment technician",
-        ]),
-        ("Transportation", [
-            "driver", "delivery driver", "transportation",
-            "truck driver", "courier", "dispatcher",
-        ]),
-        ("Retail", [
-            "retail", "store associate", "sales associate",
-            "cashier", "store manager",
-        ]),
-        ("Restaurants", [
-            "restaurant", "server", "waiter", "waitress", "cook",
-            "chef", "food service", "line cook", "dishwasher",
-        ]),
-        ("Hospitality", [
-            "hotel", "resort", "hospitality", "front desk",
-            "guest services", "housekeeping",
-        ]),
-        ("Security", ["security", "security officer", "security guard"]),
-        ("Sales", [
-            "sales", "account executive", "sales representative",
-            "business development",
-        ]),
-        ("Customer Service", [
-            "customer service", "customer support", "call center",
-            "contact center",
-        ]),
-        ("Finance", [
-            "accountant", "accounting", "finance", "financial analyst",
-            "financial", "bookkeeper", "banking",
-        ]),
-        ("Administrative", [
-            "administrative", "administration", "office assistant",
-            "receptionist", "executive assistant", "office coordinator",
-        ]),
-        ("Education", [
-            "teacher", "professor", "instructor", "education",
-            "school counselor", "academic",
-        ]),
-        ("Government", [
-            "government", "federal", "municipal", "public sector",
-        ]),
-    ]
-
-    for category, terms in categories:
-        if any(term in title for term in terms):
-            return category
-
-    strong_technology_content = [
-        "software engineering", "software development", "javascript",
-        "typescript", "python", "sql", "llm", "large language model",
-        "machine learning", "artificial intelligence", "rest api",
-        "soap api", "ci/cd", "database modeling", "data modeling",
-        "cloud infrastructure", "devops",
-    ]
-
-    score = sum(1 for term in strong_technology_content if term in content)
-
-    if score >= 2:
-        return "Technology"
-
-    return "Other"
-
-
-# ============================================================
-# WORK MODE
-# ============================================================
-
-def extract_work_mode(text):
-    """
-    Clasifica la modalidad usando señales explícitas.
-    Evita detectar Remote solo porque se menciona un equipo remoto.
-    Una indicación inequívoca de 100% presencial tiene prioridad.
-    """
-
-    if not text:
-        return "Unknown"
-
-    lowered = normalize_space(text).lower()
-
-    # Una declaración inequívoca de presencialidad tiene prioridad.
-    onsite_explicit_patterns = [
-        r"\b100\s*%\s*(?:on[- ]?site|onsite|in[- ]person)\b",
-        r"\bfully\s+on[- ]?site\b",
-        r"\bstrictly\s+on[- ]?site\b",
-        r"\bthis\s+is\s+an?\s+on[- ]?site\s+role\b",
-        r"\bon[- ]?site\s+position\b",
-        r"\bonsite\s+position\b",
-        r"\bwork\s+must\s+be\s+performed\s+on[- ]?site\b",
-    ]
-
-    if any(
-        re.search(pattern, lowered)
-        for pattern in onsite_explicit_patterns
-    ):
-        return "On-site"
-
-    # Hybrid solo se reconoce por una indicación de modalidad,
-    # no por una mención incidental.
-    hybrid_patterns = [
-        r"\bhybrid\s+(?:work|schedule|role|position|model|arrangement)\b",
-        r"\bhybrid[- ]work\b",
-        r"\bhybrid\s+workplace\b",
-        r"\bthis\s+is\s+a\s+hybrid\b",
-        r"\bhybrid\b",
-    ]
-
-    if any(
-        re.search(pattern, lowered)
-        for pattern in hybrid_patterns
-    ):
-        return "Hybrid"
-
-    # Requiere evidencia explícita de que el puesto es remoto.
-    remote_patterns = [
-        r"\bfully\s+remote\b",
-        r"\b100\s*%\s+remote\b",
-        r"\bthis\s+is\s+a\s+remote\s+(?:role|position|job)\b",
-        r"\bremote\s+(?:role|position|job)\b",
-        r"\bremote[- ]first\b",
-        r"\bwork\s+remotely\b",
-        r"\bwork\s+from\s+home\b",
-        r"\bremote\s+work\s+arrangement\b",
-        r"\bposition\s+is\s+remote\b",
-        r"\bremote\s+eligible\b",
-    ]
-
-    if any(
-        re.search(pattern, lowered)
-        for pattern in remote_patterns
-    ):
-        return "Remote"
-
-    # Presencialidad explícita sin ser necesariamente 100%.
-    onsite_patterns = [
-        r"\bon[- ]site\b",
-        r"\bonsite\b",
-        r"\bin[- ]person\s+at\s+(?:our|the)\s+office\b",
-        r"\boffice[- ]based\b",
-        r"\bin[- ]office\s+(?:role|position|work)\b",
-        r"\bwork\s+from\s+(?:our|the)\s+office\b",
-        r"\bmust\s+be
+    # El envoltorio opcional permite que el período esté ausente,
+    # sin alterar los índices de los grupos capturados.
+    optional_period = r"(?
