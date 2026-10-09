@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 import json
 import os
@@ -19,14 +18,10 @@ from sources import (
 
 app = Flask(__name__)
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 CACHE_SECONDS = 300
 
-_cache = {
-    "jobs": [],
-    "sources": [],
-    "timestamp": 0,
-}
+_cache = {"jobs": [], "sources": [], "timestamp": 0}
 _cache_lock = threading.Lock()
 
 US_STATES = {
@@ -53,8 +48,7 @@ US_STATES = {
 }
 
 STATE_NAMES = {
-    code.lower(): name
-    for name, code in US_STATES.items()
+    code.lower(): name for name, code in US_STATES.items()
 }
 
 
@@ -68,7 +62,6 @@ def load_jobs():
             return jobs if isinstance(jobs, list) else []
 
         return data if isinstance(data, list) else []
-
     except (OSError, ValueError, TypeError):
         return []
 
@@ -116,11 +109,8 @@ def fetch_all_jobs():
         ("Greenhouse", GREENHOUSE_BOARDS, normalize_greenhouse_board),
         ("Lever", LEVER_BOARDS, get_lever_jobs),
         ("Ashby", ASHBY_BOARDS, get_ashby_jobs),
-        (
-            "SmartRecruiters",
-            SMARTRECRUITERS_BOARDS,
-            get_smartrecruiters_jobs,
-        ),
+        ("SmartRecruiters", SMARTRECRUITERS_BOARDS,
+         get_smartrecruiters_jobs),
     ]
 
     for source_name, boards, getter in source_groups:
@@ -179,24 +169,55 @@ def location_matches(job, requested_location):
 
     location = job.get("location", {})
 
-    if not isinstance(location, dict):
-        return query in str(location).lower()
+    if isinstance(location, dict):
+        municipality = str(location.get("municipality") or "").lower()
+        region = str(location.get("region") or "").lower()
+        country = str(location.get("country") or "").lower()
+        raw = str(location.get("raw") or "").lower()
+    else:
+        municipality = ""
+        region = ""
+        country = ""
+        raw = str(location or "").lower()
 
-    municipality = str(location.get("municipality") or "").lower()
-    region = str(location.get("region") or "").lower()
-    country = str(location.get("country") or "").lower()
-    raw = str(location.get("raw") or "").lower()
     location_text = " ".join(
         [municipality, region, country, raw]
     )
 
-    if query in {"puerto rico", "puerto-rico", "pr"}:
-        return (
-            country == "pr"
-            or region == "puerto rico"
-            or "puerto rico" in location_text
-        )
+    eligibility = job.get("eligibility") or {}
+    if not isinstance(eligibility, dict):
+        eligibility = {}
 
+    raw_territories = eligibility.get("territories", [])
+    if not isinstance(raw_territories, (list, tuple, set)):
+        raw_territories = [raw_territories]
+
+    territories = {
+        str(item).strip().upper()
+        for item in raw_territories
+        if item is not None
+    }
+
+    eligible_pr = (
+        "PR" in territories
+        or "PUERTO RICO" in territories
+    )
+
+    work_mode = str(job.get("work_mode") or "").strip().lower()
+    is_remote = work_mode == "remote"
+
+    physical_pr = (
+        country in {"pr", "pri", "puerto rico"}
+        or region == "puerto rico"
+        or "puerto rico" in location_text
+    )
+
+    # Puerto Rico: puestos locales y puestos remotos
+    # cuya elegibilidad menciona expresamente Puerto Rico.
+    if query in {"puerto rico", "puerto-rico", "pr"}:
+        return physical_pr or (is_remote and eligible_pr)
+
+    # Búsqueda general por Estados Unidos.
     if query in {
         "united states", "united states of america",
         "usa", "us", "u.s.", "u.s.a.",
@@ -207,13 +228,16 @@ def location_matches(job, requested_location):
             or "usa" in location_text
         )
 
+    # Búsqueda por estado.
     state_code = US_STATES.get(query)
 
     if not state_code and query in STATE_NAMES:
         state_code = query.upper()
 
     if state_code:
-        state_name = STATE_NAMES.get(state_code.lower(), "").lower()
+        state_name = STATE_NAMES.get(
+            state_code.lower(), ""
+        ).lower()
         raw_tokens = raw.replace(",", " ").split()
 
         return (
@@ -223,12 +247,24 @@ def location_matches(job, requested_location):
             or state_code.lower() in raw_tokens
         )
 
+    # Búsqueda por ciudad y estado, por ejemplo Austin, Texas
+    # o Bayamón, PR.
     if "," in query:
-        parts = [part.strip() for part in query.split(",") if part.strip()]
+        parts = [
+            part.strip()
+            for part in query.split(",")
+            if part.strip()
+        ]
 
         if len(parts) >= 2:
             city_query = parts[0]
             state_query = parts[-1]
+
+            if state_query in {"pr", "puerto rico", "puerto-rico"}:
+                return (
+                    city_query in municipality or city_query in raw
+                ) and physical_pr
+
             requested_code = US_STATES.get(state_query)
 
             if not requested_code and state_query in STATE_NAMES:
