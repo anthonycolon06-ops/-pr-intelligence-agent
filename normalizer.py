@@ -161,9 +161,12 @@ def extract_location(job):
     if not raw:
         return result
 
-    # Do not invent a physical location for remote jobs.
+    # Una vacante remota no tiene necesariamente una ubicación física conocida.
     if re.search(r"\b(remote|work from home|distributed|anywhere)\b", low):
-        if re.search(r"\b(united states|u\.s\.|usa|us only|remote - us)\b", low):
+        if re.search(
+            r"\b(united states|u\.s\.|usa|us only|remote\s*[-,]\s*us)\b",
+            low
+        ):
             result["country"] = "United States"
         elif "puerto rico" in low or re.search(r"\bremote\s*[-,]\s*pr\b", low):
             result["country"] = "Puerto Rico"
@@ -172,16 +175,16 @@ def extract_location(job):
     if "puerto rico" in low or re.search(r"(?:,\s*|\b)PR$", raw.strip(), re.I):
         result["country"] = "Puerto Rico"
         parts = [normalize_space(p) for p in raw.split(",") if normalize_space(p)]
+        excluded = {
+            "puerto rico", "pr", "pri", "united states", "usa", "us",
+            "remote", "hybrid"
+        }
         for part in parts:
-            if part.lower() not in {
-                "puerto rico", "pr", "pri", "united states", "usa", "us",
-                "remote", "hybrid"
-            }:
+            if part.lower() not in excluded:
                 result["municipality"] = part
                 break
         return result
 
-    # Prefer structured location data when the source provides it.
     if isinstance(job, dict) and isinstance(job.get("location"), dict):
         loc = job["location"]
         country = normalize_space(loc.get("country") or loc.get("countryCode"))
@@ -202,7 +205,6 @@ def extract_location(job):
     last = parts[-1] if parts else raw
     last_low = last.lower()
 
-    # City, State, Country
     if last_low in {"united states", "usa", "us", "u.s.", "u.s.a."} and len(parts) >= 2:
         state = parts[-2]
         if state.lower() in US_STATES or state.upper() in STATE_CODE_TO_NAME:
@@ -219,7 +221,6 @@ def extract_location(job):
             result["region"] = parts[-2]
         return result
 
-    # City, state name or abbreviation.
     if len(parts) >= 2:
         state = parts[-1]
         if state.lower() in US_STATES or state.upper() in STATE_CODE_TO_NAME:
@@ -228,7 +229,6 @@ def extract_location(job):
             result["municipality"] = parts[0]
             return result
 
-    # A country name anywhere in the raw location.
     for alias, canonical in sorted(
         COUNTRY_ALIASES.items(), key=lambda item: len(item[0]), reverse=True
     ):
@@ -240,7 +240,6 @@ def extract_location(job):
                 result["region"] = parts[-2]
             return result
 
-    # Preserve unknown locations without claiming a country.
     if len(parts) >= 2:
         result["municipality"] = parts[0]
         result["region"] = parts[1]
@@ -263,11 +262,12 @@ def extract_eligibility(text):
         "must reside in", "based in", "remote in", "remote within",
         "available in"
     )
+
     relevant = low
     for marker in markers:
         idx = low.find(marker)
         if idx >= 0:
-            relevant = low[idx:idx + 1500]
+            relevant = low[idx:idx + 2500]
             break
 
     if "puerto rico" in relevant:
@@ -344,15 +344,65 @@ def _salary_number(value):
         return None
     if isinstance(value, (int, float)):
         return float(value)
+
     text = normalize_space(value).replace(",", "")
-    match = re.search(r"\$?\s*(\d+(?:\.\d{1,2})?)", text)
-    return float(match.group(1)) if match else None
+    match = re.search(r"\$?\s*(\d+(?:\.\d{1,2})?)\s*([kK]?)", text)
+    if not match:
+        return None
+
+    number = float(match.group(1))
+    if match.group(2).lower() == "k":
+        number *= 1000
+    return number
+
+
+def _salary_values_plausible(numbers, period="unknown", has_currency=False):
+    """
+    Reject obvious parsing mistakes such as a salary of $2.
+    Thresholds are conservative and do not infer a missing pay period.
+    """
+    if not numbers:
+        return False
+
+    if any(number <= 0 for number in numbers):
+        return False
+
+    minimum = min(numbers)
+    maximum = max(numbers)
+
+    # A tiny number is not credible compensation unless the source's
+    # explicit currency/period context makes it plausible.
+    if maximum < 5:
+        return False
+
+    if period == "hour" and minimum >= 5:
+        return True
+    if period == "day" and minimum >= 20:
+        return True
+    if period == "week" and minimum >= 50:
+        return True
+    if period == "biweekly" and minimum >= 100:
+        return True
+    if period == "month" and minimum >= 200:
+        return True
+    if period == "year" and minimum >= 1000:
+        return True
+
+    if has_currency and minimum >= 100:
+        return True
+
+    # Without a known pay period, accept only values large enough to be
+    # credible salary figures, rather than isolated digits in descriptions.
+    if period == "unknown" and minimum >= 1000:
+        return True
+
+    return False
 
 
 def extract_salary(text):
     """
-    Extract salary only when a plausible salary phrase is present.
-    Unknown pay periods remain unknown; no period is invented.
+    Extract pay only from an explicitly labeled compensation phrase or
+    a currency range that includes a pay period. Reject incidental numbers.
     """
     content = html_to_text(text)
     empty = {
@@ -362,45 +412,77 @@ def extract_salary(text):
     if not content:
         return empty
 
-    patterns = [
-        r"(?is)(?:salary|pay|compensation|wage|rate|earnings|base pay|base salary|salary range|pay range)"
+    amount = (
+        r"(?:(?:USD)\s*)?\$?\s*"
+        r"\d[\d,]*(?:\.\d{1,2})?\s*(?:[kK])?"
+    )
+    range_separator = r"\s*(?:-|–|—|to)\s*"
+
+    period_pattern = (
+        r"(?:per\s+hour|per\s+day|per\s+week|per\s+month|per\s+year|"
+        r"hourly|daily|weekly|monthly|annually|annual|yearly|"
+        r"hour|day|week|month|year|/hr|/hour|/year)"
+    )
+
+    # Pattern A: explicitly labeled salary/pay range, optionally with period.
+    labeled_pattern = re.compile(
+        r"(?i)\b(?:salary(?:\s+range)?|pay(?:\s+range)?|"
+        r"compensation|wages?|hourly\s+rate|base\s+pay|base\s+salary|"
+        r"earnings|rate)\b"
         r"[^.\n]{0,100}?"
-        r"((?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?"
-        r"(?:\s*(?:-|–|—|to)\s*(?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?)?)"
-        r"\s*(per\s+hour|per\s+day|per\s+week|per\s+month|per\s+year|hourly|daily|weekly|monthly|annually|annual|yearly|hour|day|week|month|year|/hr|/hour|/year)?",
-        r"(?is)((?:USD\s*)?\$\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?"
-        r"\s*(?:-|–|—|to)\s*(?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:k|K)?)"
-        r"\s*(per\s+hour|per\s+day|per\s+week|per\s+month|per\s+year|hourly|daily|weekly|monthly|annually|annual|yearly|hour|day|week|month|year|/hr|/hour|/year)"
-    ]
+        r"(?P<amounts>" + amount + r"(?:"
+        + range_separator + amount + r")?)"
+        r"(?:\s*(?P<period>" + period_pattern + r"))?"
+    )
 
-    for pattern in patterns:
-        match = re.search(pattern, content)
-        if not match:
-            continue
+    # Pattern B: explicit currency range plus explicit pay period.
+    currency_range_pattern = re.compile(
+        r"(?i)(?P<amounts>"
+        r"(?:USD\s*)?\$\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:[kK])?"
+        + range_separator +
+        r"(?:USD\s*)?\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:[kK])?"
+        r")\s*(?P<period>" + period_pattern + r")"
+    )
 
-        amounts_text = match.group(1)
-        period_text = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
-        numbers = []
-        for number, suffix in re.findall(
-            r"\$?\s*(\d[\d,]*(?:\.\d{1,2})?)\s*([kK]?)",
-            amounts_text
-        ):
-            try:
-                parsed = float(number.replace(",", ""))
-                if suffix.lower() == "k":
-                    parsed *= 1000
-                numbers.append(parsed)
-            except (ValueError, TypeError):
+    for pattern in (labeled_pattern, currency_range_pattern):
+        for match in pattern.finditer(content):
+            amounts_text = match.group("amounts") or ""
+            period_text = match.groupdict().get("period") or ""
+            period = normalize_salary_period(period_text)
+
+            numbers = []
+            for number, suffix in re.findall(
+                r"\$?\s*(\d[\d,]*(?:\.\d{1,2})?)\s*([kK]?)",
+                amounts_text
+            ):
+                try:
+                    parsed = float(number.replace(",", ""))
+                    if suffix.lower() == "k":
+                        parsed *= 1000
+                    numbers.append(parsed)
+                except (ValueError, TypeError):
+                    continue
+
+            has_currency = (
+                "$" in amounts_text or
+                "USD" in amounts_text.upper() or
+                bool(re.search(r"\d,\d{3}", amounts_text)) or
+                bool(re.search(r"\d\s*[kK]\b", amounts_text))
+            )
+
+            if not _salary_values_plausible(
+                numbers, period=period, has_currency=has_currency
+            ):
                 continue
 
-        if numbers:
             minimum = min(numbers)
             maximum = max(numbers) if len(numbers) > 1 else minimum
+
             return {
                 "min": minimum,
                 "max": maximum,
-                "currency": "USD" if "$" in amounts_text or "USD" in amounts_text.upper() else None,
-                "period": normalize_salary_period(period_text),
+                "currency": "USD" if has_currency else None,
+                "period": period,
                 "display": normalize_space(match.group(0))[:240]
             }
 
@@ -411,46 +493,88 @@ def _salary_from_job_fields(job):
     if not isinstance(job, dict):
         return None
 
-    for key in ("salary", "salary_range", "salaryRange", "compensation", "payRange"):
+    for key in (
+        "salary", "salary_range", "salaryRange",
+        "compensation", "payRange"
+    ):
         value = job.get(key)
-        if not value:
+        if value is None or value == "":
             continue
 
         if isinstance(value, dict):
             minimum = _salary_number(
-                value.get("min") or value.get("minimum") or value.get("minValue")
+                value.get("min") if value.get("min") is not None
+                else value.get("minimum", value.get("minValue"))
             )
             maximum = _salary_number(
-                value.get("max") or value.get("maximum") or value.get("maxValue")
+                value.get("max") if value.get("max") is not None
+                else value.get("maximum", value.get("maxValue"))
             )
             currency = value.get("currency") or value.get("currencyCode")
             period = normalize_salary_period(
                 value.get("period") or value.get("interval") or
                 value.get("unit") or value.get("payFrequency")
             )
-            display = value.get("display") or value.get("description") or value.get("text")
+            display = (
+                value.get("display") or value.get("description") or
+                value.get("text")
+            )
 
             if minimum is not None or maximum is not None:
                 if minimum is None:
                     minimum = maximum
                 if maximum is None:
                     maximum = minimum
+
+                if minimum is None or maximum is None:
+                    continue
+
                 if maximum < minimum:
                     minimum, maximum = maximum, minimum
+
+                currency_text = str(currency or display or "")
+                has_currency = (
+                    bool(currency) or "$" in currency_text or
+                    "USD" in currency_text.upper()
+                )
+
+                if not _salary_values_plausible(
+                    [minimum, maximum],
+                    period=period,
+                    has_currency=has_currency
+                ):
+                    continue
+
                 return {
                     "min": minimum,
                     "max": maximum,
-                    "currency": currency or ("USD" if "$" in str(display or "") else None),
+                    "currency": currency or (
+                        "USD" if has_currency else None
+                    ),
                     "period": period,
                     "display": normalize_space(display) or None
                 }
 
-        elif isinstance(value, (int, float)):
-            return {
-                "min": float(value), "max": float(value),
-                "currency": None, "period": "unknown", "display": str(value)
-            }
-        else:
+            # Some providers supply only a human-readable pay range.
+            if display:
+                parsed = extract_salary(display)
+                if parsed["min"] is not None:
+                    return parsed
+
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            # An isolated number has no currency or pay period context.
+            # Do not publish it as salary.
+            number = float(value)
+            if number >= 1000:
+                return {
+                    "min": number,
+                    "max": number,
+                    "currency": None,
+                    "period": "unknown",
+                    "display": str(value)
+                }
+
+        elif isinstance(value, str):
             parsed = extract_salary(value)
             if parsed["min"] is not None:
                 return parsed
@@ -470,7 +594,10 @@ def extract_employment_type(text):
         return "Internship"
     if re.search(r"\b(temporary|temp position|seasonal)\b", value):
         return "Temporary"
-    if re.search(r"\b(contractor|contract position|fixed[\s-]?term contract|contract employment)\b", value):
+    if re.search(
+        r"\b(contractor|contract position|fixed[\s-]?term contract|contract employment)\b",
+        value
+    ):
         return "Contract"
     if re.search(r"\b(permanent position|regular employee)\b", value):
         return "Permanent"
@@ -478,18 +605,29 @@ def extract_employment_type(text):
 
 
 def extract_industry(text, job=None):
+    """
+    Prefer the job title and department over the full description.
+    This prevents benefits or incidental terms from misclassifying a role.
+    """
     if isinstance(text, dict) and job is None:
         job = text
         text = get_job_content(job)
 
     title = ""
     department = ""
+
     if isinstance(job, dict):
         title = normalize_space(job.get("title") or job.get("name"))
-        departments = job.get("departments") or job.get("department") or job.get("team") or ""
+        departments = (
+            job.get("departments") or job.get("department") or
+            job.get("team") or ""
+        )
+
         if isinstance(departments, list):
             department = " ".join(
-                normalize_space(item.get("name") if isinstance(item, dict) else item)
+                normalize_space(
+                    item.get("name") if isinstance(item, dict) else item
+                )
                 for item in departments
             )
         elif isinstance(departments, dict):
@@ -497,34 +635,109 @@ def extract_industry(text, job=None):
         else:
             department = normalize_space(departments)
 
-    combined = f"{title} {department} {normalize_space(text)}".lower()
+    title_low = title.lower()
+    department_low = department.lower()
+    description_low = normalize_space(text).lower()
 
-    rules = [
-        ("Healthcare", r"\b(nurse|nursing|physician|doctor|medical|clinical|patient|pharmacy|therapist|hospital|healthcare|health care|dental)\b"),
-        ("Aviation", r"\b(aircraft|aviation|airline|airport|flight crew|pilot|avionics|a&p mechanic|ground handling|ramp agent|line service technician|air cargo)\b"),
-        ("Manufacturing", r"\b(manufactur\w*|production operator|production worker|assembly line|fabrication|machinist|quality inspector|plant operator)\b"),
-        ("Logistics", r"\b(warehouse|inventory|fulfillment|distribution center|shipping|receiving|freight|cargo|supply chain|material handler|picker|packer)\b"),
-        ("Construction", r"\b(construction|carpenter|concrete|electrician|plumber|welder|mason|heavy equipment|jobsite)\b"),
-        ("Maintenance", r"\b(maintenance|facilities technician|building engineer|repair technician|mechanic|hvac|refrigeration|groundskeeper)\b"),
-        ("Transportation", r"\b(truck driver|delivery driver|fleet|transportation|bus driver|courier|dispatcher|driver\b)\b"),
-        ("Restaurants", r"\b(cook|chef|line cook|dishwasher|server|waiter|waitress|restaurant|food prep|barista)\b"),
-        ("Hospitality", r"\b(hotel|resort|guest services|housekeeping|front desk|concierge|event staff|tourism)\b"),
-        ("Retail", r"\b(retail|cashier|sales associate|store associate|merchandis|stock associate|store manager)\b"),
-        ("Security", r"\b(security guard|security officer|loss prevention|protective services|surveillance)\b"),
-        ("Customer Service", r"\b(customer service|call center|contact center|client support|customer care|help desk)\b"),
-        ("Finance", r"\b(accountant|accounting|bookkeep|financial analyst|banking|investment|payroll|accounts payable|accounts receivable|auditor)\b"),
-        ("Government", r"\b(government|public sector|municipal|federal agency|civil service|public administration)\b"),
-        ("Education", r"\b(teacher|educator|school|university|professor|instructor|tutor|curriculum|academic)\b"),
-        ("Sales", r"\b(sales representative|account executive|business development|sales manager|account manager|\bsales\b)\b"),
-        ("Marketing & Design", r"\b(marketing|graphic design|designer|creative director|copywriter|brand|communications|social media)\b"),
-        ("Administrative", r"\b(administrative assistant|office assistant|receptionist|office manager|executive assistant|data entry|clerical)\b"),
-        ("Technology", r"\b(software|developer|programmer|information technology|cybersecurity|data engineer|machine learning|artificial intelligence|cloud engineer|devops|systems analyst|product manager|ux designer|it support)\b"),
-        ("Engineering", r"\b(civil engineer|mechanical engineer|electrical engineer|industrial engineer|chemical engineer|aerospace engineer|engineering technician)\b"),
+    # Strong role-specific signals. Title matches take precedence.
+    title_rules = [
+        ("Technology", r"\b(product management|product manager|software engineer|software developer|"
+                       r"data engineer|data scientist|machine learning|artificial intelligence|"
+                       r"systems analyst|systems engineer|cybersecurity|devops|cloud engineer|"
+                       r"ux designer|ui designer|it support|information technology|"
+                       r"application developer|web developer|programmer|qa engineer)\b"),
+        ("Healthcare", r"\b(nurse|nursing|physician|medical assistant|clinical|patient care|"
+                       r"pharmacist|pharmacy technician|dentist|dental hygienist|"
+                       r"registered nurse|physical therapist|occupational therapist)\b"),
+        ("Aviation", r"\b(aircraft|aviation|airline|airport|flight crew|pilot|avionics|"
+                     r"a&p mechanic|ground handling|ramp agent|line service technician|air cargo)\b"),
+        ("Manufacturing", r"\b(manufacturing|production operator|production worker|assembly line|"
+                          r"fabrication|machinist|quality inspector|plant operator)\b"),
+        ("Logistics", r"\b(warehouse|material handler|picker|packer|shipping and receiving|"
+                      r"freight agent|logistics coordinator|distribution center|inventory clerk)\b"),
+        ("Construction", r"\b(construction worker|carpenter|concrete worker|electrician|plumber|"
+                         r"welder|mason|heavy equipment operator)\b"),
+        ("Maintenance", r"\b(maintenance technician|facilities technician|building engineer|"
+                        r"repair technician|hvac technician|refrigeration technician|groundskeeper)\b"),
+        ("Transportation", r"\b(truck driver|delivery driver|bus driver|courier|fleet coordinator|"
+                           r"dispatcher|transportation specialist)\b"),
+        ("Restaurants", r"\b(cook|chef|line cook|dishwasher|server|waiter|waitress|restaurant|"
+                        r"food preparation|barista)\b"),
+        ("Hospitality", r"\b(hotel|resort|guest services|housekeeping|front desk agent|"
+                        r"concierge|tourism|event staff)\b"),
+        ("Retail", r"\b(retail|cashier|sales associate|store associate|merchandiser|"
+                   r"stock associate|store manager)\b"),
+        ("Security", r"\b(security guard|security officer|loss prevention|protective services|"
+                      r"surveillance officer)\b"),
+        ("Customer Service", r"\b(customer service|call center|contact center|client support|"
+                              r"customer care|customer success representative|help desk)\b"),
+        ("Finance", r"\b(accountant|accounting|bookkeeper|financial analyst|banking|investment analyst|"
+                     r"payroll specialist|accounts payable|accounts receivable|auditor)\b"),
+        ("Government", r"\b(government|public sector|municipal|federal agency|civil service|"
+                       r"public administration)\b"),
+        ("Education", r"\b(teacher|educator|school|university|professor|instructor|tutor|"
+                      r"curriculum|academic advisor)\b"),
+        ("Sales", r"\b(sales representative|account executive|business development representative|"
+                   r"sales manager|sales consultant|inside sales|outside sales)\b"),
+        ("Marketing & Design", r"\b(marketing|graphic designer|creative director|copywriter|"
+                               r"brand manager|communications specialist|social media manager|"
+                               r"visual designer|art director)\b"),
+        ("Administrative", r"\b(administrative assistant|office assistant|receptionist|"
+                           r"office manager|executive assistant|data entry clerk|clerical)\b"),
+        ("Engineering", r"\b(civil engineer|mechanical engineer|electrical engineer|industrial engineer|"
+                        r"chemical engineer|aerospace engineer|engineering technician)\b"),
     ]
 
-    for industry, pattern in rules:
-        if re.search(pattern, combined):
+    for industry, pattern in title_rules:
+        if re.search(pattern, title_low):
             return industry
+
+    # Use department as the next strongest signal.
+    department_rules = [
+        ("Technology", r"\b(software|engineering|information technology|it|data|product|technology)\b"),
+        ("Healthcare", r"\b(healthcare|clinical|patient care|medical|nursing|pharmacy)\b"),
+        ("Aviation", r"\b(aviation|aircraft|flight operations|airport operations|flight services)\b"),
+        ("Manufacturing", r"\b(manufacturing|production|assembly|quality)\b"),
+        ("Logistics", r"\b(logistics|warehouse|distribution|supply chain|shipping|receiving)\b"),
+        ("Finance", r"\b(finance|accounting|payroll|audit|treasury)\b"),
+        ("Marketing & Design", r"\b(marketing|design|creative|communications|brand)\b"),
+        ("Sales", r"\b(sales|business development|account management)\b"),
+        ("Human Resources", r"\b(human resources|people operations|talent acquisition|recruiting)\b"),
+    ]
+
+    for industry, pattern in department_rules:
+        if re.search(pattern, department_low):
+            return industry
+
+    # Only use the description when title and department are inconclusive.
+    description_rules = [
+        ("Technology", r"\b(software development|machine learning|artificial intelligence|"
+                       r"cloud infrastructure|cybersecurity|database engineering|devops)\b"),
+        ("Healthcare", r"\b(nursing care|clinical treatment|patient care|medical diagnosis|"
+                       r"healthcare provider|hospital operations|pharmacy services)\b"),
+        ("Aviation", r"\b(aircraft maintenance|airline operations|airport operations|flight operations|"
+                     r"air cargo handling)\b"),
+        ("Manufacturing", r"\b(manufacturing plant|production line|industrial assembly|"
+                          r"factory operations)\b"),
+        ("Logistics", r"\b(warehouse operations|freight forwarding|inventory control|"
+                      r"distribution operations|supply chain operations)\b"),
+        ("Construction", r"\b(construction site|building construction|commercial construction)\b"),
+        ("Maintenance", r"\b(facilities maintenance|equipment repair|preventive maintenance|hvac systems)\b"),
+        ("Transportation", r"\b(transportation operations|commercial vehicle|delivery routes)\b"),
+        ("Restaurants", r"\b(restaurant kitchen|food service operations|restaurant dining)\b"),
+        ("Hospitality", r"\b(hotel operations|guest experience|hospitality services)\b"),
+        ("Retail", r"\b(retail store operations|point of sale|store merchandising)\b"),
+        ("Security", r"\b(security operations|access control|loss prevention)\b"),
+        ("Customer Service", r"\b(customer inquiries|customer support team|call center operations)\b"),
+        ("Finance", r"\b(financial reporting|general ledger|accounts payable|accounts receivable)\b"),
+        ("Education", r"\b(classroom instruction|student learning|educational curriculum)\b"),
+        ("Government", r"\b(public administration|government agency|municipal services)\b"),
+    ]
+
+    for industry, pattern in description_rules:
+        if re.search(pattern, description_low):
+            return industry
+
     return "Other"
 
 
@@ -532,11 +745,22 @@ def extract_work_mode(text):
     value = normalize_space(text).lower()
     if not value:
         return "Unknown"
-    if re.search(r"\b(hybrid|partially remote|remote and on[- ]site|mix of remote and office)\b", value):
+    if re.search(
+        r"\b(hybrid|partially remote|remote and on[- ]site|mix of remote and office)\b",
+        value
+    ):
         return "Hybrid"
-    if re.search(r"\b(fully remote|100% remote|remote position|remote role|work from home|work remotely|remote[- ]first|distributed team|anywhere in the world|remote)\b", value):
+    if re.search(
+        r"\b(fully remote|100% remote|remote position|remote role|work from home|"
+        r"work remotely|remote[- ]first|distributed team|anywhere in the world|remote)\b",
+        value
+    ):
         return "Remote"
-    if re.search(r"\b(on[- ]site|onsite|in[- ]person|in office|office based|office-based|must be present at|work at our facility)\b", value):
+    if re.search(
+        r"\b(on[- ]site|onsite|in[- ]person|in office|office based|office-based|"
+        r"must be present at|work at our facility)\b",
+        value
+    ):
         return "On-site"
     return "Unknown"
 
@@ -636,7 +860,7 @@ def parse_date_value(value):
 
 
 def extract_dates(job):
-    """Only use publication/creation fields; don't mistake update dates for posting dates."""
+    """Use publication/creation fields, not arbitrary update dates."""
     if not isinstance(job, dict):
         return None
 
@@ -671,9 +895,7 @@ def build_source(job, board=None, company=None):
 
 
 def normalize_greenhouse_job(job, company=None, board="greenhouse"):
-    """
-    Normalize a Greenhouse-style job and preserve the fields expected by app.py.
-    """
+    """Normalize a Greenhouse-style job while preserving app.py's fields."""
     if not isinstance(job, dict):
         job = {}
 
@@ -716,7 +938,9 @@ def normalize_greenhouse_job(job, company=None, board="greenhouse"):
         "temporary": "Temporary", "temp": "Temporary",
         "contract": "Contract"
     }
-    employment_type = employment_map.get(employment_type.lower(), employment_type or "Unknown")
+    employment_type = employment_map.get(
+        employment_type.lower(), employment_type or "Unknown"
+    )
 
     mode_source = " ".join([
         title,
@@ -729,7 +953,10 @@ def normalize_greenhouse_job(job, company=None, board="greenhouse"):
     )
     if work_mode.lower() in {"remote", "hybrid", "on-site", "onsite", "on site"}:
         mode_map = {"onsite": "On-site", "on site": "On-site"}
-        work_mode = mode_map.get(work_mode.lower(), work_mode.title() if work_mode.lower() != "on-site" else "On-site")
+        work_mode = mode_map.get(
+            work_mode.lower(),
+            work_mode.title() if work_mode.lower() != "on-site" else "On-site"
+        )
     else:
         work_mode = extract_work_mode(mode_source)
 
